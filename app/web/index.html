@@ -138,12 +138,7 @@
           <label class="field-label">商品 ID 列表（每行一个 usItemId）</label>
           <textarea id="ids-input" placeholder="每行一个 ID，例如：&#10;1234567890&#10;0987654321"></textarea>
         </div>
-        <div class="field">
-          <label class="cb-label">
-            <input type="checkbox" id="ids-detail" checked />
-            采详情（二段式）
-          </label>
-        </div>
+        <p style="font-size:12px;color:#888;margin-bottom:12px;">ℹ️ 按 ID 采集直接抓取商品完整详情（无需二段式）。</p>
         <button class="btn btn-primary" id="btn-submit-ids">提交采集</button>
         <div class="field import-box">
           <label class="field-label">或 从文件导入（txt / csv / xlsx，每行/每列一个 ID → 合并为一个任务）</label>
@@ -368,10 +363,9 @@ document.getElementById('btn-submit-ids').addEventListener('click', async () => 
   const raw = document.getElementById('ids-input').value.trim();
   const ids = raw.split('\n').map(s => s.trim()).filter(Boolean);
   if (!ids.length) { showMsg('submit-msg', 'ID 列表不能为空', 'error'); return; }
-  const with_detail = document.getElementById('ids-detail').checked;
   const resp = await apiFetch('/collect/ids', {
     method: 'POST',
-    body: JSON.stringify({ ids, with_detail }),
+    body: JSON.stringify({ ids }),  // ID 采集本就是采详情，不需 with_detail
   });
   const data = await resp.json();
   if (resp.ok) {
@@ -423,7 +417,8 @@ async function importFile(type, fileInputId, extra) {
   const fd = new FormData();
   fd.append('file', f);
   fd.append('type', type);
-  fd.append('with_detail', extra.with_detail ? 'true' : 'false');
+  // ID 采集本就是采详情，不传 with_detail（端点默认 true）；keyword/seller 才传
+  if (extra.with_detail !== undefined) fd.append('with_detail', extra.with_detail ? 'true' : 'false');
   if (extra.max_pages != null) fd.append('max_pages', extra.max_pages);
   if (extra.min_price != null && extra.min_price !== '') fd.append('min_price', extra.min_price);
   if (extra.max_price != null && extra.max_price !== '') fd.append('max_price', extra.max_price);
@@ -440,7 +435,7 @@ async function importFile(type, fileInputId, extra) {
 }
 
 document.getElementById('btn-import-ids').addEventListener('click', () =>
-  importFile('ids', 'ids-file', { with_detail: document.getElementById('ids-detail').checked }));
+  importFile('ids', 'ids-file', {}));  // ID 采集即采详情，无需 with_detail
 
 document.getElementById('btn-import-keyword').addEventListener('click', () =>
   importFile('keyword', 'kw-file', {
