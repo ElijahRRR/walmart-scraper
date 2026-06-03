@@ -2,8 +2,8 @@
 
 ## 当前状态
 - Total: 28 features (M0–M7)
-- Passing: 13 / 28 (46%)
-- Current: M3 REST API
+- Passing: 18 / 28 (64%)
+- Current: M4（断点续采/失败重试/变动检测/webhook）
 
 ## 定稿决策（2026-06）
 - 架构：单进程 FastAPI + 内置 lane 池（每 lane = 1 IP，串行+限速）
@@ -55,3 +55,15 @@
 - 验证：ProxyPool._extract 全程打桩（不发真实网络请求）；Lane.pool.rotate 打桩；临时SQLite 隔离
 - Issues：无
 - Next：M3 #14-18（REST API）
+
+### Session 5 — M3 完成（2026-06-03）
+- 完成：feature #14-18（全部通过）
+- #14 三采集端点：POST /collect/ids|keyword|seller，Pydantic 校验请求体，BackgroundTasks 后台执行，先建 task 记录返回 task_id（立即响应）；参数错误 422
+- #15 任务查询：GET /tasks 分页列表（limit/offset）+ GET /tasks/{id} 单任务（含 status/progress/total/result_count）；不存在返回 404
+- #16 结果浏览：GET /products 和 GET /listings，keyset 分页（after_id 游标）+ task_id 可选过滤；空任务过滤返回空列表不报错
+- #17 代理管理：POST /proxy/rotate（调 LanePool.resume_lane，返回新IP + lane 状态）+ GET /proxy/status（返回所有 lane 快照）；lane_id 越界返回 400
+- #18 API Key 鉴权：依赖注入 require_api_key，请求头 X-API-Key；GET /health 豁免；默认 dev-key-change-me，可 .env 覆盖
+- 新增文件：app/api.py（FastAPI 主应用）、run_server.py（uvicorn 启动脚本）、tests/test_m3_api.py（30 项断言）
+- 验证：85 项测试（M1 27 + M2 28 + M3 30）全过；test_parser.py 31 项无回归；全程无真实网络请求
+- Issues：无
+- Next：M4 #19-22（断点续采/失败重试/变动检测/webhook）

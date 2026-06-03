@@ -15,11 +15,11 @@
   {"id": 12, "category": "proxy", "milestone": "M2", "description": "防封：识别 403/429/waiting-room/验证码；封控时暂停该 lane 报警", "steps": ["waiting-room 识别", "封控置lane为blocked", "不自动换IP"], "passes": true},
   {"id": 13, "category": "proxy", "milestone": "M2", "description": "proxy_log 记录：每次提取IP、封控、每IP产出商品数", "steps": ["提取入库", "封控入库", "可算每IP寿命产出"], "passes": true},
 
-  {"id": 14, "category": "api", "milestone": "M3", "description": "REST：POST /collect/ids|keyword|seller 提交任务", "steps": ["三端点接收参数", "返回task_id", "参数校验"], "passes": false},
-  {"id": 15, "category": "api", "milestone": "M3", "description": "REST：GET /tasks/{id} 进度、GET /tasks 列表", "steps": ["返回状态/进度", "分页列表", "含结果计数"], "passes": false},
-  {"id": 16, "category": "api", "milestone": "M3", "description": "REST：GET /products 与 /listings 分页浏览结果", "steps": ["keyset分页", "可按task过滤", "字段完整"], "passes": false},
-  {"id": 17, "category": "api", "milestone": "M3", "description": "REST：POST /proxy/rotate 手动换IP、GET /proxy/status 当前IP", "steps": ["手动换IP端点", "状态端点", "供前端按钮调用"], "passes": false},
-  {"id": 18, "category": "api", "milestone": "M3", "description": "API Key 鉴权（header），可在 .env 配置", "steps": ["无key拒绝", "正确key放行", "默认dev key"], "passes": false},
+  {"id": 14, "category": "api", "milestone": "M3", "description": "REST：POST /collect/ids|keyword|seller 提交任务", "steps": ["三端点接收参数", "返回task_id", "参数校验"], "passes": true},
+  {"id": 15, "category": "api", "milestone": "M3", "description": "REST：GET /tasks/{id} 进度、GET /tasks 列表", "steps": ["返回状态/进度", "分页列表", "含结果计数"], "passes": true},
+  {"id": 16, "category": "api", "milestone": "M3", "description": "REST：GET /products 与 /listings 分页浏览结果", "steps": ["keyset分页", "可按task过滤", "字段完整"], "passes": true},
+  {"id": 17, "category": "api", "milestone": "M3", "description": "REST：POST /proxy/rotate 手动换IP、GET /proxy/status 当前IP", "steps": ["手动换IP端点", "状态端点", "供前端按钮调用"], "passes": true},
+  {"id": 18, "category": "api", "milestone": "M3", "description": "API Key 鉴权（header），可在 .env 配置", "steps": ["无key拒绝", "正确key放行", "默认dev key"], "passes": true},
 
   {"id": 19, "category": "engine", "milestone": "M4", "description": "断点续采：任务中断后从未完成项继续", "steps": ["记录已完成项", "重启续采", "不重复采"], "passes": false},
   {"id": 20, "category": "engine", "milestone": "M4", "description": "失败重试：单项失败按规则重试（非封控）", "steps": ["瞬时失败重试", "封控不盲目重试", "超限标failed"], "passes": false},
