@@ -41,6 +41,8 @@
     .row .field { flex: 1; }
     input[type=checkbox] { margin-right: 6px; }
     .cb-label { display: flex; align-items: center; cursor: pointer; font-size: 13px; }
+    .import-box { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #ddd; }
+    .import-box input[type=file] { font-size: 12px; }
 
     button.btn { padding: 8px 18px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; }
     button.btn-primary { background: #0071ce; color: #fff; }
@@ -143,6 +145,11 @@
           </label>
         </div>
         <button class="btn btn-primary" id="btn-submit-ids">提交采集</button>
+        <div class="field import-box">
+          <label class="field-label">或 从文件导入（txt / csv / xlsx，每行/每列一个 ID → 合并为一个任务）</label>
+          <input type="file" id="ids-file" accept=".txt,.csv,.xlsx" />
+          <button class="btn btn-primary btn-sm" id="btn-import-ids" style="margin-top:8px;">导入文件并采集</button>
+        </div>
       </div>
 
       <!-- Keyword 面板 -->
@@ -172,6 +179,11 @@
           </label>
         </div>
         <button class="btn btn-primary" id="btn-submit-keyword">提交采集</button>
+        <div class="field import-box">
+          <label class="field-label">或 批量导入关键词（txt / csv / xlsx，每行一个 → 每个关键词建一个任务，沿用上方翻页/价格/详情设置）</label>
+          <input type="file" id="kw-file" accept=".txt,.csv,.xlsx" />
+          <button class="btn btn-primary btn-sm" id="btn-import-keyword" style="margin-top:8px;">导入文件并批量采集</button>
+        </div>
       </div>
 
       <!-- Seller 面板 -->
@@ -193,6 +205,11 @@
           </label>
         </div>
         <button class="btn btn-primary" id="btn-submit-seller">提交采集</button>
+        <div class="field import-box">
+          <label class="field-label">或 批量导入卖家ID（txt / csv / xlsx，每行一个 → 每个卖家建一个任务，沿用上方翻页/详情设置）</label>
+          <input type="file" id="sel-file" accept=".txt,.csv,.xlsx" />
+          <button class="btn btn-primary btn-sm" id="btn-import-seller" style="margin-top:8px;">导入文件并批量采集</button>
+        </div>
       </div>
 
       <div class="msg" id="submit-msg"></div>
@@ -396,6 +413,48 @@ document.getElementById('btn-submit-seller').addEventListener('click', async () 
     showMsg('submit-msg', `提交失败（${resp.status}）：${JSON.stringify(data)}`, 'error');
   }
 });
+
+// ── 文件批量导入 ────────────────────────────────────────────────────────────────
+
+async function importFile(type, fileInputId, extra) {
+  const fileInput = document.getElementById(fileInputId);
+  const f = fileInput.files[0];
+  if (!f) { showMsg('submit-msg', '请先选择文件（txt/csv/xlsx）', 'error'); return; }
+  const fd = new FormData();
+  fd.append('file', f);
+  fd.append('type', type);
+  fd.append('with_detail', extra.with_detail ? 'true' : 'false');
+  if (extra.max_pages != null) fd.append('max_pages', extra.max_pages);
+  if (extra.min_price != null && extra.min_price !== '') fd.append('min_price', extra.min_price);
+  if (extra.max_price != null && extra.max_price !== '') fd.append('max_price', extra.max_price);
+  // 注意：FormData 不要手动设 Content-Type，浏览器会自动带 multipart boundary
+  const resp = await fetch('/collect/import', { method: 'POST', headers: { 'X-API-Key': apiKey() }, body: fd });
+  const data = await resp.json();
+  if (resp.ok) {
+    showMsg('submit-msg', `✓ 解析 ${data.parsed} 条，创建 ${data.created} 个任务：${data.task_ids.join(', ')}`, 'ok');
+    fileInput.value = '';
+    loadTasks();
+  } else {
+    showMsg('submit-msg', `导入失败（${resp.status}）：${data.detail || JSON.stringify(data)}`, 'error');
+  }
+}
+
+document.getElementById('btn-import-ids').addEventListener('click', () =>
+  importFile('ids', 'ids-file', { with_detail: document.getElementById('ids-detail').checked }));
+
+document.getElementById('btn-import-keyword').addEventListener('click', () =>
+  importFile('keyword', 'kw-file', {
+    with_detail: document.getElementById('kw-detail').checked,
+    max_pages: parseInt(document.getElementById('kw-max-pages').value) || 25,
+    min_price: document.getElementById('kw-min-price').value,
+    max_price: document.getElementById('kw-max-price').value,
+  }));
+
+document.getElementById('btn-import-seller').addEventListener('click', () =>
+  importFile('seller', 'sel-file', {
+    with_detail: document.getElementById('sel-detail').checked,
+    max_pages: parseInt(document.getElementById('sel-max-pages').value) || 10,
+  }));
 
 // ── 任务列表 ──────────────────────────────────────────────────────────────────
 

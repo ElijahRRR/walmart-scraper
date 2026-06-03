@@ -22,7 +22,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
+from fastapi import (
+    BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile,
+)
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -31,6 +33,7 @@ from app import config
 from app.db import init_db, get_conn
 from app.service.tasks import create_task, get_task, list_tasks
 from app.service.lanes import get_lane_pool
+from app.service.importer import parse_upload
 
 # 前端静态文件目录（app/web/）
 _WEB_DIR = Path(__file__).parent / "web"
@@ -220,6 +223,68 @@ def submit_seller(body: CollectSellerRequest,
     )
     logger.info("submit_seller task_id=%d seller_id=%s", task_id, body.seller_id)
     return {"task_id": task_id, "status": "pending"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 文件批量导入端点（txt / csv / xlsx）
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/collect/import", tags=["collect"])
+async def collect_import(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(..., description="txt/csv/xlsx，每行/每列一个条目"),
+    type: str = Form(..., description="ids | keyword | seller"),
+    with_detail: bool = Form(True),
+    max_pages: int = Form(25),
+    min_price: Optional[float] = Form(None),
+    max_price: Optional[float] = Form(None),
+    _key: str = Depends(require_api_key),
+):
+    """上传文件批量提交采集任务。
+
+    - type=ids     ：解析出的所有 ID 合并为**一个**详情采集任务。
+    - type=keyword ：每行一个关键词，**每个**关键词建一个任务。
+    - type=seller  ：每行一个卖家ID，**每个**卖家建一个任务。
+    返回解析条数、创建任务数、task_id 列表。
+    """
+    if type not in ("ids", "keyword", "seller"):
+        raise HTTPException(status_code=400, detail="type 必须是 ids | keyword | seller")
+
+    content = await file.read()
+    try:
+        tokens = parse_upload(file.filename, content)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not tokens:
+        raise HTTPException(status_code=400, detail="文件未解析出任何有效条目")
+
+    task_ids: list[int] = []
+    if type == "ids":
+        tid = create_task("detail", {"ids": tokens, "with_detail": with_detail,
+                                     "source": file.filename})
+        background_tasks.add_task(_bg_run_ids, tokens, with_detail)
+        task_ids.append(tid)
+    elif type == "keyword":
+        for kw in tokens:
+            params: dict[str, Any] = {"keyword": kw, "max_pages": max_pages,
+                                      "with_detail": with_detail, "source": file.filename}
+            if min_price is not None:
+                params["min_price"] = min_price
+            if max_price is not None:
+                params["max_price"] = max_price
+            tid = create_task("keyword", params)
+            background_tasks.add_task(_bg_run_keyword, kw, max_pages, with_detail,
+                                      min_price, max_price)
+            task_ids.append(tid)
+    else:  # seller
+        for sid in tokens:
+            tid = create_task("seller", {"seller_id": sid, "max_pages": max_pages,
+                                         "with_detail": with_detail, "source": file.filename})
+            background_tasks.add_task(_bg_run_seller, sid, max_pages, with_detail)
+            task_ids.append(tid)
+
+    logger.info("collect_import type=%s 解析=%d 建任务=%d", type, len(tokens), len(task_ids))
+    return {"type": type, "parsed": len(tokens), "created": len(task_ids), "task_ids": task_ids}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
