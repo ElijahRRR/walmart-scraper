@@ -63,3 +63,41 @@ def get_conn():
         raise
     finally:
         conn.close()
+
+
+def bump_metric(
+    total_requests: int = 0,
+    total_success: int = 0,
+    total_429: int = 0,
+    total_blocked: int = 0,
+    total_products: int = 0,
+    total_ip_used: int = 0,
+) -> None:
+    """原子累加 metrics 表中的指标计数器。
+
+    以 INSERT OR IGNORE 确保行存在，再 UPDATE 累加。
+    设计为防御式：写失败只记 warning，不向上抛异常（不影响主采集流程）。
+    """
+    try:
+        with get_conn() as conn:
+            conn.execute("INSERT OR IGNORE INTO metrics(id) VALUES(1)")
+            conn.execute(
+                """
+                UPDATE metrics SET
+                    total_requests = total_requests + ?,
+                    total_success  = total_success  + ?,
+                    total_429      = total_429      + ?,
+                    total_blocked  = total_blocked  + ?,
+                    total_products = total_products + ?,
+                    total_ip_used  = total_ip_used  + ?,
+                    updated_at     = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                WHERE id = 1
+                """,
+                (
+                    total_requests, total_success,
+                    total_429, total_blocked,
+                    total_products, total_ip_used,
+                ),
+            )
+    except Exception as exc:
+        logger.warning("bump_metric 写入失败（不影响采集）: %s", exc)

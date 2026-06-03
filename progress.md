@@ -2,8 +2,8 @@
 
 ## 当前状态
 - Total: 28 features (M0–M7)
-- Passing: 25 / 28 (89%)
-- Current: M5 已完成，下一步 M6
+- Passing: 27 / 28 (96%)
+- Current: M6 已完成，下一步 M7（#28 部署）
 
 ## 定稿决策（2026-06）
 - 架构：单进程 FastAPI + 内置 lane 池（每 lane = 1 IP，串行+限速）
@@ -66,6 +66,21 @@
 - 验证：全套 115 项测试（M1-M4 + parser）全过；全程无真实网络请求；webhook 用 monkeypatch 打桩
 - Issues：无
 - Next：M5 #23-25（极简前端）
+
+### Session 8 — M6 完成（2026-06-03）
+- 完成：feature #26-27（全部通过）
+- #26 指标仪表：
+  - app/db.py 新增 bump_metric()：原子 UPDATE 累加 metrics 表 6 个计数器（total_requests/success/429/blocked/products/ip_used）
+  - app/service/runner.py：_collect_with_retry 每次请求后调 bump_metric（成功/429/封控/瞬时失败各自累加）；save_product 成功写库后 bump_metric(total_products=1)
+  - app/service/lanes.py：_log_proxy_event(event='extract') 时额外调 bump_metric(total_ip_used=1)
+  - app/api.py 新增 GET /metrics 端点：从 metrics 表取累积计数器，从 proxy_log yield 事件聚合 avg_yield_per_ip；计算 success_rate/rate_429/blocked_rate（分母为0返回null）；需要 X-API-Key 鉴权
+  - app/web/index.html 新增「采集指标」面板（metrics-grid）：6个数字卡片（总请求/成功/429/封控/入库商品/累计IP数），含成功率/占比子标注；自动刷新（默认10s）
+- #27 压测脚本：
+  - scripts/stress_ip_lifespan.py：顶部注释写明用法和"会消耗IP"警告；run_stress(product_ids, dry_run, block_at, lane_id)函数；dry-run内建mock collector（第N次返回封控）；统计total_requests/blocked_at_request/block_reason/products_saved/elapsed_sec；CLI支持--ids/--keyword/--dry-run/--block-at/--lane/--output
+- 测试：tests/test_m6_metrics.py，28项全过；全套171项（M1-M6）+ 31 parser = 202项全过；无回归
+- 验证：所有指标计算用临时SQLite注入数据断言；压测脚本dry-run封控逻辑正确；零真实网络请求
+- Issues：无
+- Next：M7 #28（部署文档/systemd/docker）
 
 ### Session 7 — M5 完成（2026-06-03）
 - 完成：feature #23-25（全部通过）

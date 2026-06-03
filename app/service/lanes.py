@@ -27,6 +27,7 @@ def _log_proxy_event(ip: str, event: str, count: int = 0, detail: str = "") -> N
     """写一条 proxy_log 记录（extract / block / yield）。
 
     设计上做了防御：DB 未初始化或写失败都只记 warning，不影响采集主流程。
+    当 event='extract' 时同步累计 metrics.total_ip_used。
     """
     try:
         from app.db import get_conn
@@ -37,6 +38,14 @@ def _log_proxy_event(ip: str, event: str, count: int = 0, detail: str = "") -> N
             )
     except Exception as exc:
         logger.warning("proxy_log 写入失败（不影响采集）：%s", exc)
+
+    # 每次提取新IP，累计 total_ip_used 指标
+    if event == "extract":
+        try:
+            from app.db import bump_metric
+            bump_metric(total_ip_used=1)
+        except Exception as exc:
+            logger.warning("bump_metric(ip_used) 失败（不影响采集）：%s", exc)
 
 
 # ── Lane 状态 ─────────────────────────────────────────────────────────────────

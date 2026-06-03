@@ -30,7 +30,7 @@
   {“id”: 24, “category”: “ui”, “milestone”: “M5”, “description”: “极简前端：任务列表+进度+结果查看”, “steps”: [“任务列表轮询进度”, “点开看结果”, “结果表格”], “passes”: true},
   {“id”: 25, “category”: “ui”, “milestone”: “M5”, “description”: “极简前端：当前IP显示 + 手动”获取/切换IP”按钮”, “steps”: [“显示当前IP/寿命”, “按钮调rotate”, “封控状态提示”], “passes”: true},
 
-  {"id": 26, "category": "metrics", "milestone": "M6", "description": "指标仪表：总请求/成功率/429率/封控率/IP数/每IP产出", "steps": ["metrics聚合", "/metrics端点", "前端展示"], "passes": false},
-  {"id": 27, "category": "test", "milestone": "M6", "description": "压测脚本：单IP寿命（连采到封，统计每IP商品数）", "steps": ["连续采到封", "输出每IP产出", "封控率"], "passes": false},
+  {"id": 26, "category": "metrics", "milestone": "M6", "description": "指标仪表：总请求/成功率/429率/封控率/IP数/每IP产出", "steps": ["metrics聚合", "/metrics端点", "前端展示"], "passes": true},
+  {"id": 27, "category": "test", "milestone": "M6", "description": "压测脚本：单IP寿命（连采到封，统计每IP商品数）", "steps": ["连续采到封", "输出每IP产出", "封控率"], "passes": true},
   {"id": 28, "category": "infra", "milestone": "M7", "description": "部署：run_server.py + systemd/docker + 文档", "steps": ["run_server启动", "部署脚本", "README更新"], "passes": false}
 ]

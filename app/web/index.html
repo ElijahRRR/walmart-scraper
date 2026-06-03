@@ -94,6 +94,13 @@
     .lane-card .kv b { color: #222; }
     .warn-blocked { color: #e65100; font-weight: 600; margin-top: 6px; font-size: 12px; }
 
+    /* ── 指标网格 ── */
+    .metrics-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+    .metric-card { border: 1px solid #dde; border-radius: 6px; padding: 14px 18px; min-width: 140px; flex: 1; background: #fafbff; }
+    .metric-card .metric-label { font-size: 11px; color: #888; margin-bottom: 4px; }
+    .metric-card .metric-value { font-size: 22px; font-weight: 700; color: #0071ce; }
+    .metric-card .metric-sub   { font-size: 11px; color: #999; margin-top: 2px; }
+
     /* ── 加载指示 ── */
     .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc; border-top-color: #0071ce; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-left: 6px; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -244,6 +251,29 @@
           <thead id="result-thead"><tr><td style="color:#aaa">暂无数据</td></tr></thead>
           <tbody id="result-tbody"></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 指标仪表（M6）── -->
+  <div class="card" id="metricsCard">
+    <div class="card-header">
+      📊 采集指标
+      <span id="metrics-spinner" class="spinner" style="display:none"></span>
+    </div>
+    <div class="card-body">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" id="btn-refresh-metrics">刷新指标</button>
+        <label>自动刷新：
+          <select id="metrics-refresh-interval">
+            <option value="0">关闭</option>
+            <option value="10000" selected>10 秒</option>
+            <option value="30000">30 秒</option>
+          </select>
+        </label>
+      </div>
+      <div class="metrics-grid" id="metrics-grid">
+        <p style="color:#aaa;font-size:13px">点击「刷新指标」加载采集统计</p>
       </div>
     </div>
   </div>
@@ -537,6 +567,67 @@ function renderProxyLanes(lanes) {
     </div>`;
   }).join('');
 }
+
+// ── 指标仪表（M6）────────────────────────────────────────────────────────────
+
+let _metricsTimer = null;
+
+function fmtPct(val) {
+  if (val === null || val === undefined) return '—';
+  return (val * 100).toFixed(1) + '%';
+}
+
+async function loadMetrics() {
+  const spinner = document.getElementById('metrics-spinner');
+  spinner.style.display = 'inline-block';
+  try {
+    const resp = await apiFetch('/metrics');
+    if (!resp.ok) {
+      document.getElementById('metrics-grid').innerHTML =
+        `<p style="color:red">获取失败（${resp.status}）</p>`;
+      return;
+    }
+    const d = await resp.json();
+    renderMetrics(d);
+  } finally {
+    spinner.style.display = 'none';
+  }
+}
+
+function renderMetrics(d) {
+  const items = [
+    { label: '总请求数',       value: d.total_requests ?? 0,       sub: '' },
+    { label: '成功次数',        value: d.total_success  ?? 0,       sub: `成功率 ${fmtPct(d.success_rate)}` },
+    { label: '429/等待室',     value: d.total_429       ?? 0,       sub: `占比 ${fmtPct(d.rate_429)}` },
+    { label: '封控次数',        value: d.total_blocked  ?? 0,       sub: `封控率 ${fmtPct(d.blocked_rate)}` },
+    { label: '入库商品数',      value: d.total_products  ?? 0,      sub: '' },
+    { label: '累计IP数',        value: d.total_ip_used   ?? 0,      sub: `每IP均产 ${d.avg_yield_per_ip ?? '—'} 件` },
+  ];
+  document.getElementById('metrics-grid').innerHTML = items.map(it =>
+    `<div class="metric-card">
+      <div class="metric-label">${it.label}</div>
+      <div class="metric-value">${it.value}</div>
+      ${it.sub ? `<div class="metric-sub">${it.sub}</div>` : ''}
+    </div>`
+  ).join('');
+}
+
+document.getElementById('btn-refresh-metrics').addEventListener('click', loadMetrics);
+
+document.getElementById('metrics-refresh-interval').addEventListener('change', function() {
+  clearInterval(_metricsTimer);
+  const ms = parseInt(this.value);
+  if (ms > 0) {
+    _metricsTimer = setInterval(loadMetrics, ms);
+    loadMetrics();
+  }
+});
+
+// 初始自动刷新（10s 已选中）
+_metricsTimer = setInterval(loadMetrics, 10000);
+loadMetrics();
+
+// ── 代理/IP 状态 ──────────────────────────────────────────────────────────────
 
 document.getElementById('btn-refresh-proxy').addEventListener('click', loadProxyStatus);
 

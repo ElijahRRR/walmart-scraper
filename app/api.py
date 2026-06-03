@@ -378,3 +378,82 @@ def proxy_status(_key: str = Depends(require_api_key)):
     """查询所有 lane 的当前IP、寿命、产出、封控状态。"""
     pool = get_lane_pool()
     return {"lanes": pool.get_all_status()}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 指标端点（M6）
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/metrics", tags=["metrics"])
+def get_metrics(_key: str = Depends(require_api_key)):
+    """返回全局采集指标聚合数据。
+
+    计算字段（由 metrics 表 + proxy_log 表聚合）：
+      - total_requests   : 总请求次数
+      - total_success    : 成功次数（200 且解析 ok）
+      - total_429        : HTTP 429（waiting-room）次数
+      - total_blocked    : 封控次数（含 403/验证码等）
+      - total_products   : 成功入库商品数
+      - total_ip_used    : 累计使用过的 IP 数
+      - success_rate     : 成功率（0~1，total_requests=0 时为 null）
+      - rate_429         : 429 比率（0~1）
+      - blocked_rate     : 封控比率（0~1）
+      - avg_yield_per_ip : 每IP平均产出商品数（来自 proxy_log yield 聚合）
+    """
+    with get_conn() as conn:
+        # 从 metrics 表取累积计数器
+        row = conn.execute(
+            "SELECT * FROM metrics WHERE id = 1"
+        ).fetchone()
+
+        # 从 proxy_log 聚合：每IP产出（yield 事件的 count 字段求平均）
+        yield_row = conn.execute(
+            "SELECT COUNT(*) AS yield_count, SUM(count) AS yield_total"
+            " FROM proxy_log WHERE event = 'yield'"
+        ).fetchone()
+
+    if row is None:
+        # metrics 行不存在（极端情况：库刚建未被写入）
+        total_requests = 0
+        total_success = 0
+        total_429 = 0
+        total_blocked = 0
+        total_products = 0
+        total_ip_used = 0
+        updated_at = None
+    else:
+        total_requests = row["total_requests"]
+        total_success  = row["total_success"]
+        total_429      = row["total_429"]
+        total_blocked  = row["total_blocked"]
+        total_products = row["total_products"]
+        total_ip_used  = row["total_ip_used"]
+        updated_at     = row["updated_at"]
+
+    # 计算比率（分母为 0 时返回 None）
+    def safe_rate(numerator: int, denominator: int):
+        if denominator <= 0:
+            return None
+        return round(numerator / denominator, 4)
+
+    # 每IP平均产出：yield_count > 0 时才计算
+    yield_count = yield_row["yield_count"] if yield_row else 0
+    yield_total = yield_row["yield_total"] if yield_row else 0
+    if yield_count and yield_count > 0 and yield_total:
+        avg_yield_per_ip = round(yield_total / yield_count, 2)
+    else:
+        avg_yield_per_ip = None
+
+    return {
+        "total_requests": total_requests,
+        "total_success":  total_success,
+        "total_429":      total_429,
+        "total_blocked":  total_blocked,
+        "total_products": total_products,
+        "total_ip_used":  total_ip_used,
+        "success_rate":   safe_rate(total_success, total_requests),
+        "rate_429":       safe_rate(total_429, total_requests),
+        "blocked_rate":   safe_rate(total_blocked, total_requests),
+        "avg_yield_per_ip": avg_yield_per_ip,
+        "updated_at":     updated_at,
+    }

@@ -21,7 +21,7 @@ import json
 import logging
 from typing import Any, Iterable, Optional
 
-from app.db import get_conn
+from app.db import get_conn, bump_metric
 from app.service.tasks import (
     create_task, update_progress, update_status,
     mark_item_done, get_completed_ids,
@@ -302,6 +302,8 @@ def save_product(result: dict, task_id: Optional[int] = None) -> bool:
             product_id, change_info["changed_fields"],
         )
 
+    # 成功写入：累计商品总数
+    bump_metric(total_products=1)
     logger.debug("save_product: upsert product_id=%s task_id=%s has_change=%s",
                  product_id, task_id, has_change)
     return True
@@ -437,6 +439,8 @@ def _collect_with_retry(collector, product_id: str) -> dict:
                 "collect_detail 异常 product_id=%s attempt=%d/%d err=%s",
                 product_id, attempt + 1, RETRY_MAX + 1, exc,
             )
+            # 异常计为一次请求失败（非封控）
+            bump_metric(total_requests=1)
             if attempt < RETRY_MAX:
                 continue
             # 超过重试上限
@@ -445,19 +449,26 @@ def _collect_with_retry(collector, product_id: str) -> dict:
 
         st = r.get("_status", "")
 
-        # 封控：直接返回，不重试
+        # 封控：直接返回，不重试；累计封控指标
         if st in BLOCKED_STATUSES:
             logger.info(
                 "collect_detail 封控 product_id=%s status=%s，不重试",
                 product_id, st,
             )
+            # waiting_room 对应 429；其余为通用封控
+            if st == "waiting_room":
+                bump_metric(total_requests=1, total_429=1, total_blocked=1)
+            else:
+                bump_metric(total_requests=1, total_blocked=1)
             return r
 
-        # 成功或 partial：直接返回
+        # 成功或 partial：记录成功指标
         if st in ("ok", "partial"):
+            bump_metric(total_requests=1, total_success=1)
             return r
 
         # 其他失败状态（empty_page/no_next_data/give_up）：视为瞬时失败，重试
+        bump_metric(total_requests=1)
         logger.debug(
             "collect_detail 非封控失败 product_id=%s status=%s attempt=%d/%d，重试",
             product_id, st, attempt + 1, RETRY_MAX + 1,
