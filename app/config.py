@@ -98,6 +98,15 @@ PORT: int = _get_int("PORT", 8900)
 DB_PATH: str = _get("DB_PATH", "data/walmart.db")
 """SQLite 数据库路径（相对项目根目录，或绝对路径）"""
 
+# ── webhook 回调（M4） ────────────────────────────────────────────────────────
+WEBHOOK_URL: str = _get("WEBHOOK_URL", "")
+"""任务完成回调 URL；空字符串表示关闭（默认关）。
+可在 .env 设置：WEBHOOK_URL=https://your-server/callback"""
+
+# ── 重试设置（M4） ─────────────────────────────────────────────────────────
+RETRY_MAX: int = _get_int("RETRY_MAX", 2)
+"""单个 item 瞬时失败最大重试次数（默认 2，封控不重试）"""
+
 
 # ── 统一 settings 对象（字典形式，方便序列化和 FastAPI 依赖注入） ──────────────
 settings: dict = {
@@ -110,4 +119,6 @@ settings: dict = {
     "api_key": API_KEY,
     "port": PORT,
     "db_path": DB_PATH,
+    "webhook_url": WEBHOOK_URL,
+    "retry_max": RETRY_MAX,
 }

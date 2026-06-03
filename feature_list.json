@@ -21,10 +21,10 @@
   {"id": 17, "category": "api", "milestone": "M3", "description": "REST：POST /proxy/rotate 手动换IP、GET /proxy/status 当前IP", "steps": ["手动换IP端点", "状态端点", "供前端按钮调用"], "passes": true},
   {"id": 18, "category": "api", "milestone": "M3", "description": "API Key 鉴权（header），可在 .env 配置", "steps": ["无key拒绝", "正确key放行", "默认dev key"], "passes": true},
 
-  {"id": 19, "category": "engine", "milestone": "M4", "description": "断点续采：任务中断后从未完成项继续", "steps": ["记录已完成项", "重启续采", "不重复采"], "passes": false},
-  {"id": 20, "category": "engine", "milestone": "M4", "description": "失败重试：单项失败按规则重试（非封控）", "steps": ["瞬时失败重试", "封控不盲目重试", "超限标failed"], "passes": false},
-  {"id": 21, "category": "engine", "milestone": "M4", "description": "变动检测：与上次商品快照对比价格/库存/卖家数变化", "steps": ["快照存储", "变动字段标记", "可查变动列表"], "passes": false},
-  {"id": 22, "category": "api", "milestone": "M4", "description": "webhook 完成回调（可配，默认关）", "steps": ["任务完成POST回调", "可配URL", "失败不阻塞"], "passes": false},
+  {"id": 19, "category": "engine", "milestone": "M4", "description": "断点续采：任务中断后从未完成项继续", "steps": ["记录已完成项", "重启续采", "不重复采"], "passes": true},
+  {"id": 20, "category": "engine", "milestone": "M4", "description": "失败重试：单项失败按规则重试（非封控）", "steps": ["瞬时失败重试", "封控不盲目重试", "超限标failed"], "passes": true},
+  {"id": 21, "category": "engine", "milestone": "M4", "description": "变动检测：与上次商品快照对比价格/库存/卖家数变化", "steps": ["快照存储", "变动字段标记", "可查变动列表"], "passes": true},
+  {"id": 22, "category": "api", "milestone": "M4", "description": "webhook 完成回调（可配，默认关）", "steps": ["任务完成POST回调", "可配URL", "失败不阻塞"], "passes": true},
 
   {"id": 23, "category": "ui", "milestone": "M5", "description": "极简前端：任务提交表单（三类型切换）", "steps": ["三类型表单", "提交调API", "显示task_id"], "passes": false},
   {"id": 24, "category": "ui", "milestone": "M5", "description": "极简前端：任务列表+进度+结果查看", "steps": ["任务列表轮询进度", "点开看结果", "结果表格"], "passes": false},

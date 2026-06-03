@@ -2,8 +2,8 @@
 
 ## 当前状态
 - Total: 28 features (M0–M7)
-- Passing: 18 / 28 (64%)
-- Current: M4（断点续采/失败重试/变动检测/webhook）
+- Passing: 22 / 28 (79%)
+- Current: M5（极简前端）
 
 ## 定稿决策（2026-06）
 - 架构：单进程 FastAPI + 内置 lane 池（每 lane = 1 IP，串行+限速）
@@ -55,6 +55,17 @@
 - 验证：ProxyPool._extract 全程打桩（不发真实网络请求）；Lane.pool.rotate 打桩；临时SQLite 隔离
 - Issues：无
 - Next：M3 #14-18（REST API）
+
+### Session 6 — M4 完成（2026-06-03）
+- 完成：feature #19-22（全部通过）
+- #19 断点续采：tasks 表新增 completed_ids（JSON 列表）字段；mark_item_done(task_id, product_id) 追加、get_completed_ids(task_id) 读取；run_ids 支持 resume_task_id 参数续采模式：跳过已完成项只采剩余，每采完一项 mark_item_done
+- #20 失败重试：_collect_with_retry(collector, product_id) 函数：瞬时失败（non-blocked _status/异常）最多重试 RETRY_MAX=2 次；封控状态（blocked/waiting_room/captcha）直接返回不重试；超过重试上限返回 give_up，不中止整任务；单项 give_up 后任务继续处理下一项
+- #21 变动检测：products 表新增 prev_price/prev_in_stock/prev_seller_count/has_change 字段；新增 product_changes 表记录每次变动（old/new 价格+卖家数）；save_product 每次 upsert 前调 _detect_changes 对比旧值；有变动写 product_changes 记录；API 新增 GET /products/changes 端点
+- #22 webhook 回调：config 新增 WEBHOOK_URL（默认空=关闭）和 RETRY_MAX；_fire_webhook 用 urllib 标准库 POST 任务摘要；_maybe_fire_webhook 从参数/config 读取 URL；run_ids/run_keyword/run_seller 完成后触发；webhook 失败只记 warning 不抛异常（blocked 状态不触发）
+- 测试：tests/test_m4_robustness.py 新增 30 项测试；M1 测试调整1项（test_run_ids_exception_marks_failed → test_run_ids_exception_give_up_task_done）以反映重试后行为
+- 验证：全套 115 项测试（M1-M4 + parser）全过；全程无真实网络请求；webhook 用 monkeypatch 打桩
+- Issues：无
+- Next：M5 #23-25（极简前端）
 
 ### Session 5 — M3 完成（2026-06-03）
 - 完成：feature #14-18（全部通过）

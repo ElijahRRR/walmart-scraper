@@ -580,15 +580,16 @@ class TestRunFlows(unittest.TestCase):
 
     # ── 异常降级 ────────────────────────────────────────────────────────────
 
-    def test_run_ids_exception_marks_failed(self):
-        """collector 抛异常 → 任务状态标 failed"""
+    def test_run_ids_exception_give_up_task_done(self):
+        """collector 持续抛异常（超过重试上限）→ item 被 give_up 跳过，任务状态仍为 done
+        （M4 后：单个 item 失败不影响整任务继续；异常由重试层捕获）"""
         mock_c = MagicMock()
         mock_c.collect_detail.side_effect = RuntimeError("模拟网络超时")
 
         task_id = self.runner.run_ids(["00001"], collector=mock_c)
         task = self.tasks.get_task(task_id)
-        self.assertEqual(task["status"], "failed")
-        self.assertIn("模拟网络超时", task["error_msg"])
+        # M4 后：重试层捕获异常，item give_up，任务 done
+        self.assertEqual(task["status"], "done")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,11 +1,12 @@
 """表结构定义（DDL）。
 
-5 张表：
-  tasks       — 采集任务（状态机）
-  products    — 商品快照（16采集字段 + 卖家数量 + buybox卖家信息）
-  listings    — 列表项（搜索/卖家shopall的部分字段，关联任务）
-  proxy_log   — 代理事件日志（提取/封控 + 产出计数）
-  metrics     — 全局请求指标计数器（单行累积）
+6 张表：
+  tasks            — 采集任务（状态机）
+  products         — 商品快照（16采集字段 + 卖家数量 + buybox卖家信息 + 变动检测前值）
+  product_changes  — 商品变动记录（价格/库存/卖家数每次变动一行）
+  listings         — 列表项（搜索/卖家shopall的部分字段，关联任务）
+  proxy_log        — 代理事件日志（提取/封控 + 产出计数）
+  metrics          — 全局请求指标计数器（单行累积）
 """
 
 # ── tasks 表 ────────────────────────────────────────────────────────────────
@@ -20,6 +21,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     total       INTEGER NOT NULL DEFAULT 0,      -- 预计子项总数（0=未知）
     result_count INTEGER NOT NULL DEFAULT 0,     -- 成功落库的商品数
     error_msg   TEXT,                            -- failed/blocked 时的错误说明
+    -- 断点续采：已完成的 product_id 集合（JSON 列表；字符串集合形式存储）
+    completed_ids TEXT NOT NULL DEFAULT '[]',    -- JSON list of product_id strings
     created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 )
@@ -74,6 +77,11 @@ CREATE TABLE IF NOT EXISTS products (
     seller_count        INTEGER,                 -- 可售卖家总数（含 buybox）
     other_seller_count  INTEGER,                 -- 除 buybox 外的其他卖家数
     other_sellers       TEXT,                    -- JSON：SSR 内联的其他卖家报价
+    -- ── 变动检测：上次快照数值（用于与本次比对） ─────────────────────────────
+    prev_price          REAL,                    -- 上次落库的价格（NULL=首次入库）
+    prev_in_stock       INTEGER,                 -- 上次在库状态（0/1/NULL）
+    prev_seller_count   INTEGER,                 -- 上次卖家总数（NULL=首次入库）
+    has_change          INTEGER NOT NULL DEFAULT 0, -- 0/1：本次入库是否检测到变动
     -- ── 元数据 ───────────────────────────────────────────────────────────
     parse_status    TEXT    DEFAULT 'ok',        -- ok / partial / blocked / ...
     snapshot_at     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -84,6 +92,31 @@ _CREATE_PRODUCTS_IDX = [
     # product_id 已有 UNIQUE 约束，隐式创建了索引，此处只补 task_id 和 snapshot_at 索引
     "CREATE INDEX IF NOT EXISTS idx_products_task_id ON products(task_id)",
     "CREATE INDEX IF NOT EXISTS idx_products_snapshot_at ON products(snapshot_at)",
+    "CREATE INDEX IF NOT EXISTS idx_products_has_change ON products(has_change)",
+]
+
+# ── product_changes 表 ───────────────────────────────────────────────────────
+# 商品变动记录，每次检测到变动时写入一行，供历史追溯
+_CREATE_PRODUCT_CHANGES = """
+CREATE TABLE IF NOT EXISTS product_changes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id  TEXT    NOT NULL,               -- usItemId
+    task_id     INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+    -- 变动字段（NULL 表示本次未变动该字段）
+    old_price       REAL,
+    new_price       REAL,
+    old_in_stock    INTEGER,
+    new_in_stock    INTEGER,
+    old_seller_count INTEGER,
+    new_seller_count INTEGER,
+    changed_fields  TEXT    NOT NULL DEFAULT '[]', -- JSON list：变动的字段名，如 ["price","seller_count"]
+    detected_at     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+)
+"""
+
+_CREATE_PRODUCT_CHANGES_IDX = [
+    "CREATE INDEX IF NOT EXISTS idx_product_changes_product_id ON product_changes(product_id)",
+    "CREATE INDEX IF NOT EXISTS idx_product_changes_detected_at ON product_changes(detected_at)",
 ]
 
 # ── listings 表 ─────────────────────────────────────────────────────────────
@@ -154,6 +187,8 @@ DDL_STATEMENTS: list[str] = [
     _CREATE_TASKS,
     _CREATE_PRODUCTS,
     *_CREATE_PRODUCTS_IDX,
+    _CREATE_PRODUCT_CHANGES,
+    *_CREATE_PRODUCT_CHANGES_IDX,
     _CREATE_LISTINGS,
     *_CREATE_LISTINGS_IDX,
     _CREATE_PROXY_LOG,

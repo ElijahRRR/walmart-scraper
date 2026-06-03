@@ -11,6 +11,10 @@
   update_progress(task_id, progress, total=None, result_count=None)
   get_task(task_id)               → dict | None
   list_tasks(limit, offset)       → list[dict]
+
+断点续采 API（M4 新增）：
+  mark_item_done(task_id, product_id)         — 将某 product_id 标记为已完成
+  get_completed_ids(task_id)                  → set[str] — 已完成 ID 集合
 """
 import json
 import logging
@@ -124,6 +128,50 @@ def get_task(task_id: int) -> Optional[dict]:
     except (json.JSONDecodeError, TypeError):
         pass
     return d
+
+
+# ── 断点续采 API（M4） ────────────────────────────────────────────────────────
+
+def mark_item_done(task_id: int, product_id: str) -> None:
+    """将指定 product_id 追加到任务的 completed_ids 集合（幂等）。
+
+    completed_ids 存储为 JSON 列表（保持有序，方便调试）。
+    设计上只追加，不删除。
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT completed_ids FROM tasks WHERE id=?", (task_id,)
+        ).fetchone()
+        if row is None:
+            return
+
+        try:
+            ids_list: list[str] = json.loads(row["completed_ids"] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            ids_list = []
+
+        if product_id not in ids_list:
+            ids_list.append(product_id)
+            conn.execute(
+                "UPDATE tasks SET completed_ids=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+                " WHERE id=?",
+                (json.dumps(ids_list, ensure_ascii=False), task_id),
+            )
+            logger.debug("mark_item_done task_id=%d product_id=%s", task_id, product_id)
+
+
+def get_completed_ids(task_id: int) -> set[str]:
+    """返回任务已完成的 product_id 集合（空任务/不存在均返回空集合）。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT completed_ids FROM tasks WHERE id=?", (task_id,)
+        ).fetchone()
+    if row is None:
+        return set()
+    try:
+        return set(json.loads(row["completed_ids"] or "[]"))
+    except (json.JSONDecodeError, TypeError):
+        return set()
 
 
 def list_tasks(limit: int = 20, offset: int = 0) -> list[dict]:

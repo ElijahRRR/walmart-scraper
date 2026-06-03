@@ -1,4 +1,4 @@
-"""FastAPI 主应用 — M3 REST API。
+"""FastAPI 主应用 — M3/M4 REST API。
 
 端点清单：
   GET  /health                          — 健康检查（免鉴权）
@@ -8,6 +8,7 @@
   GET  /tasks                           — 分页列出所有任务
   GET  /tasks/{task_id}                 — 按 ID 查单个任务
   GET  /products                        — keyset 分页浏览商品结果
+  GET  /products/changes                — 查询有变动的商品（M4）
   GET  /listings                        — keyset 分页浏览列表项结果
   POST /proxy/rotate                    — 手动换IP（指定 lane）
   GET  /proxy/status                    — 当前所有 lane 的IP/状态
@@ -244,6 +245,37 @@ def list_products(
         else:
             rows = conn.execute(
                 "SELECT * FROM products WHERE id > ? ORDER BY id ASC LIMIT ?",
+                (after_id, limit),
+            ).fetchall()
+
+    items = [dict(r) for r in rows]
+    next_cursor = items[-1]["id"] if items else after_id
+    return {
+        "items": items,
+        "count": len(items),
+        "next_cursor": next_cursor,
+        "limit": limit,
+    }
+
+
+@app.get("/products/changes", tags=["results"])
+def list_product_changes(
+    product_id: Optional[str] = Query(None, description="按商品 ID 过滤（可选）"),
+    after_id: int = Query(0, ge=0, description="keyset 分页游标"),
+    limit: int = Query(20, ge=1, le=200, description="每页数量"),
+    _key: str = Depends(require_api_key),
+):
+    """M4：查询有价格/库存/卖家数变动的商品变动记录（product_changes 表）。"""
+    with get_conn() as conn:
+        if product_id is not None:
+            rows = conn.execute(
+                "SELECT * FROM product_changes WHERE id > ? AND product_id=?"
+                " ORDER BY id ASC LIMIT ?",
+                (after_id, product_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM product_changes WHERE id > ? ORDER BY id ASC LIMIT ?",
                 (after_id, limit),
             ).fetchall()
 
