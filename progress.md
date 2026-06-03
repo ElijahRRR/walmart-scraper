@@ -2,8 +2,8 @@
 
 ## 当前状态
 - Total: 28 features (M0–M7)
-- Passing: 9 / 28 (32%)
-- Current: M2 Proxy/Lane 池
+- Passing: 13 / 28 (46%)
+- Current: M3 REST API
 
 ## 定稿决策（2026-06）
 - 架构：单进程 FastAPI + 内置 lane 池（每 lane = 1 IP，串行+限速）
@@ -44,3 +44,14 @@
 - 验证：所有 collector 网络层通过 MagicMock 替换（不发真实请求）；SQLite 临时库隔离
 - Issues：无
 - Next：M2 #10-13（ProxyPool 升级 / Lane 池 / 防封 / proxy_log）
+
+### Session 4 — M2 完成（2026-06-03）
+- 完成：feature #10-13（全部通过）
+- #10 ProxyPool 升级：get_status() 新增 born_at/age_sec 字段，返回完整IP状态（ip:port/寿命/产出计数/auto_rotate开关）；rotate() 语义确认正确（提新IP+覆盖磁盘缓存）；默认 auto_rotate=False
+- #11 app/service/lanes.py：Lane（每 lane 一个独立 ProxyPool）+ LanePool（N 条 lane 管理器）；Lane.run_work() 串行执行；LanePool.get_idle_lane() 分发任务；全局单例 get_lane_pool() 从 config 读取参数
+- #12 防封：Lane.notify_blocked(reason) 置 BLOCKED 状态+记日志，不自动换IP；BLOCKED lane 拒绝新任务；Lane.resume() 提供人工换IP后恢复入口；复用 collector._is_blocked 识别 403/429/waiting-room/验证码
+- #13 proxy_log 落库：_log_proxy_event(ip, event, count, detail) 写 proxy_log 表；extract/block/yield 三种事件；notify_blocked 触发 block 记录；resume() 触发 yield（旧IP产出）+ extract（新IP）记录；notify_product_saved() 累计产出计数
+- 测试：tests/test_m2_lanes.py，28 项断言全过；test_m1_service.py 27项无回归；test_parser.py 31项无回归
+- 验证：ProxyPool._extract 全程打桩（不发真实网络请求）；Lane.pool.rotate 打桩；临时SQLite 隔离
+- Issues：无
+- Next：M3 #14-18（REST API）

@@ -123,17 +123,40 @@ class ProxyPool:
         return self._proxy
 
     def get_status(self) -> dict:
-        """返回当前 IP 状态（供 API 展示）。"""
+        """返回当前 IP 状态（供 API 展示）。
+
+        字段说明：
+          proxy      — ip:port（账密已隐去），无IP时为 None
+          born_at    — IP 提取时的 Unix 时间戳（float），无IP时为 0
+          age_sec    — 当前IP已存活秒数（float）
+          age_min    — 当前IP已存活分钟数（保留1位小数）
+          uses       — 本IP已使用（请求）次数（即本IP产出计数）
+          alive      — 是否在安全有效期内
+          max_age_min — 配置的IP安全上限（分钟）
+          auto_rotate — 自动换IP开关状态
+        """
         with self._lock:
             if not self._proxy:
-                return {"proxy": None, "age_min": 0, "uses": 0, "alive": False}
+                return {
+                    "proxy": None,
+                    "born_at": 0,
+                    "age_sec": 0.0,
+                    "age_min": 0.0,
+                    "uses": 0,
+                    "alive": False,
+                    "max_age_min": self._max_ip_age // 60,
+                    "auto_rotate": self._auto_rotate,
+                }
             age_sec = time.time() - self._born_at
             return {
                 "proxy": self._proxy.split("@")[-1],   # 只暴露 ip:port，隐去账密
+                "born_at": self._born_at,
+                "age_sec": round(age_sec, 1),
                 "age_min": round(age_sec / 60, 1),
                 "uses": self._uses,
                 "alive": age_sec < self._max_ip_age,
                 "max_age_min": self._max_ip_age // 60,
+                "auto_rotate": self._auto_rotate,
             }
 
     # ── 节奏控制 ────────────────────────────────────────────────
