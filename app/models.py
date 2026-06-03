@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 _CREATE_PRODUCTS = """
 CREATE TABLE IF NOT EXISTS products (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_id      TEXT    NOT NULL,            -- usItemId（沃尔玛商品ID）
+    product_id      TEXT    NOT NULL UNIQUE,     -- usItemId（沃尔玛商品ID）
     task_id         INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
     -- ── 基础字段（16个采集字段） ──────────────────────────────────────────
     brand           TEXT,
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS products (
 """
 
 _CREATE_PRODUCTS_IDX = [
-    "CREATE INDEX IF NOT EXISTS idx_products_product_id ON products(product_id)",
+    # product_id 已有 UNIQUE 约束，隐式创建了索引，此处只补 task_id 和 snapshot_at 索引
     "CREATE INDEX IF NOT EXISTS idx_products_task_id ON products(task_id)",
     "CREATE INDEX IF NOT EXISTS idx_products_snapshot_at ON products(snapshot_at)",
 ]

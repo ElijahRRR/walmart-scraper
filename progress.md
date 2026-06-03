@@ -2,8 +2,8 @@
 
 ## 当前状态
 - Total: 28 features (M0–M7)
-- Passing: 5 / 28 (18%)
-- Current: M1 任务/落库逻辑
+- Passing: 9 / 28 (32%)
+- Current: M2 Proxy/Lane 池
 
 ## 定稿决策（2026-06）
 - 架构：单进程 FastAPI + 内置 lane 池（每 lane = 1 IP，串行+限速）
@@ -33,3 +33,14 @@
 - 验证：python3 test_parser.py 全过；python3 -c "from app.config import *; from app.db import init_db; init_db()" 建库建表无报错；WAL 确认
 - Issues：无
 - Next：M1 #6-9（任务状态机/详情落库/列表落库/三流程接入）
+
+### Session 3 — M1 完成（2026-06-03）
+- 完成：feature #6-9（全部通过）
+- #6 tasks.py：任务状态机 pending→running→done/failed/blocked；create_task/update_status/update_progress/get_task/list_tasks，全部落 tasks 表
+- #7 products upsert：save_product(result, task_id)→ON CONFLICT(product_id) DO UPDATE；_status 非 ok/partial 不写入；models.py products.product_id 加 UNIQUE 约束
+- #8 listings 入库：save_listing_items(items, task_id)→INSERT OR IGNORE 按 (task_id, product_id) 去重；关联 task_id
+- #9 三流程接入：runner.run_ids/run_keyword/run_seller，支持 with_detail 二段式；collector 可注入（测试无真实网络请求）
+- 测试：tests/test_m1_service.py，27 项断言全过；test_parser.py 31 项依然全过
+- 验证：所有 collector 网络层通过 MagicMock 替换（不发真实请求）；SQLite 临时库隔离
+- Issues：无
+- Next：M2 #10-13（ProxyPool 升级 / Lane 池 / 防封 / proxy_log）

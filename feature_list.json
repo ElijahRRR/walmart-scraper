@@ -5,10 +5,10 @@
   {"id": 4, "category": "infra", "milestone": "M0", "description": "SQLite 库 app/db.py：WAL 模式、建表、读写连接", "steps": ["首次启动自动建表", "WAL 开启", "连接可复用"], "passes": true},
   {"id": 5, "category": "data", "milestone": "M0", "description": "表结构 app/models.py：tasks/products/listings/proxy_log/metrics", "steps": ["5 张表 DDL", "字段含 16 商品字段+卖家数量", "建表无报错"], "passes": true},
 
-  {"id": 6, "category": "engine", "milestone": "M1", "description": "任务状态机：pending→running→done/failed/blocked，落库", "steps": ["create_task 入库", "状态流转正确", "进度字段更新"], "passes": false},
-  {"id": 7, "category": "engine", "milestone": "M1", "description": "详情结果落库：parse_product 输出 → products 表 upsert", "steps": ["16字段+卖家数量入库", "重复ID upsert", "_status 非ok 不污染"], "passes": false},
-  {"id": 8, "category": "engine", "milestone": "M1", "description": "列表结果落库：搜索/卖家列表项 → listings 表（关联任务）", "steps": ["部分字段入库", "按usItemId去重", "关联task_id"], "passes": false},
-  {"id": 9, "category": "engine", "milestone": "M1", "description": "三流程接入服务：ids/keyword/seller 各自产任务并落库", "steps": ["三流程各跑通一次", "结果正确入库", "二段式详情可选"], "passes": false},
+  {"id": 6, "category": "engine", "milestone": "M1", "description": "任务状态机：pending→running→done/failed/blocked，落库", "steps": ["create_task 入库", "状态流转正确", "进度字段更新"], "passes": true},
+  {"id": 7, "category": "engine", "milestone": "M1", "description": "详情结果落库：parse_product 输出 → products 表 upsert", "steps": ["16字段+卖家数量入库", "重复ID upsert", "_status 非ok 不污染"], "passes": true},
+  {"id": 8, "category": "engine", "milestone": "M1", "description": "列表结果落库：搜索/卖家列表项 → listings 表（关联任务）", "steps": ["部分字段入库", "按usItemId去重", "关联task_id"], "passes": true},
+  {"id": 9, "category": "engine", "milestone": "M1", "description": "三流程接入服务：ids/keyword/seller 各自产任务并落库", "steps": ["三流程各跑通一次", "结果正确入库", "二段式详情可选"], "passes": true},
 
   {"id": 10, "category": "proxy", "milestone": "M2", "description": "ProxyPool 升级：手动 rotate API + 当前IP状态查询 + 关闭自动换IP", "steps": ["手动 rotate() 提新IP", "get_status 返回当前IP/寿命/产出", "默认 auto_rotate=False"], "passes": false},
   {"id": 11, "category": "proxy", "milestone": "M2", "description": "Lane 池：N 条 lane，每 lane 一个 IP，串行+限速", "steps": ["可配 lane 数", "每lane独立IP", "任务分发到空闲lane"], "passes": false},
