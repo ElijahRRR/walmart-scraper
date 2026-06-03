@@ -1,0 +1,32 @@
+# 沃尔玛采集服务 — docker-compose
+# 用法：docker-compose up -d
+# 停止：docker-compose down
+# 查日志：docker-compose logs -f
+
+version: "3.9"
+
+services:
+  walmart-scraper:
+    build: .
+    image: walmart-scraper:latest
+    container_name: walmart-scraper
+    restart: unless-stopped
+    ports:
+      - "8900:8900"          # 宿主机端口:容器端口（PORT 配置项一致）
+    volumes:
+      - ./data:/app/data     # 持久化 SQLite 数据库
+    env_file:
+      - .env                 # 生产环境配置（不提交 git）
+    environment:
+      # 默认值可被 .env 覆盖
+      - PORT=8900
+      - DB_PATH=data/walmart.db
+      - LANES=1
+      - AUTO_ROTATE=false
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8900/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

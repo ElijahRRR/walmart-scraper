@@ -196,3 +196,42 @@ DDL_STATEMENTS: list[str] = [
     _CREATE_METRICS,
     _INSERT_METRICS_ROW,
 ]
+
+# ── 增量迁移：每张表期望拥有的"新列"及其默认 DDL ──────────────────────────────
+# 用于 db._migrate_add_missing_columns()：旧库升级时用 ALTER TABLE ADD COLUMN 补齐。
+# 格式：{table_name: {col_name: "TYPE [NOT NULL] [DEFAULT ...]"}}
+# 只列出"曾在某次 schema 演进中新增"的列；新库由 CREATE TABLE 一次性建出，不重复。
+EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
+    "tasks": {
+        # M4 断点续采：已完成的 product_id 集合
+        "completed_ids": "TEXT NOT NULL DEFAULT '[]'",
+    },
+    "products": {
+        # M4 变动检测：前次快照数值
+        "prev_price":        "REAL",
+        "prev_in_stock":     "INTEGER",
+        "prev_seller_count": "INTEGER",
+        "has_change":        "INTEGER NOT NULL DEFAULT 0",
+        # buybox 卖家信息（M0 时已加入，旧库可能缺）
+        "seller_name":            "TEXT",
+        "seller_id":              "TEXT",
+        "seller_type":            "TEXT",
+        "catalog_seller_id":      "INTEGER",
+        "seller_rating":          "REAL",
+        "seller_review_count":    "INTEGER",
+        # 卖家数量
+        "seller_count":           "INTEGER",
+        "other_seller_count":     "INTEGER",
+        "other_sellers":          "TEXT",
+        # 长描述
+        "long_description":       "TEXT",
+        "long_description_text":  "TEXT",
+        "product_details":        "TEXT",
+    },
+    "metrics": {
+        # M6 指标：累计 IP 数
+        "total_ip_used": "INTEGER NOT NULL DEFAULT 0",
+        # 更新时间（早期版本 metrics 表可能缺失）
+        "updated_at": "TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+    },
+}

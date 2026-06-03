@@ -26,11 +26,11 @@
   {"id": 21, "category": "engine", "milestone": "M4", "description": "变动检测：与上次商品快照对比价格/库存/卖家数变化", "steps": ["快照存储", "变动字段标记", "可查变动列表"], "passes": true},
   {"id": 22, "category": "api", "milestone": "M4", "description": "webhook 完成回调（可配，默认关）", "steps": ["任务完成POST回调", "可配URL", "失败不阻塞"], "passes": true},
 
-  {“id”: 23, “category”: “ui”, “milestone”: “M5”, “description”: “极简前端：任务提交表单（三类型切换）”, “steps”: [“三类型表单”, “提交调API”, “显示task_id”], “passes”: true},
-  {“id”: 24, “category”: “ui”, “milestone”: “M5”, “description”: “极简前端：任务列表+进度+结果查看”, “steps”: [“任务列表轮询进度”, “点开看结果”, “结果表格”], “passes”: true},
-  {“id”: 25, “category”: “ui”, “milestone”: “M5”, “description”: “极简前端：当前IP显示 + 手动”获取/切换IP”按钮”, “steps”: [“显示当前IP/寿命”, “按钮调rotate”, “封控状态提示”], “passes”: true},
+  {"id": 23, "category": "ui", "milestone": "M5", "description": "极简前端：任务提交表单（三类型切换）", "steps": ["三类型表单", "提交调API", "显示task_id"], "passes": true},
+  {"id": 24, "category": "ui", "milestone": "M5", "description": "极简前端：任务列表+进度+结果查看", "steps": ["任务列表轮询进度", "点开看结果", "结果表格"], "passes": true},
+  {"id": 25, "category": "ui", "milestone": "M5", "description": "极简前端：当前IP显示 + 手动获取/切换IP按钮", "steps": ["显示当前IP/寿命", "按钮调rotate", "封控状态提示"], "passes": true},
 
   {"id": 26, "category": "metrics", "milestone": "M6", "description": "指标仪表：总请求/成功率/429率/封控率/IP数/每IP产出", "steps": ["metrics聚合", "/metrics端点", "前端展示"], "passes": true},
   {"id": 27, "category": "test", "milestone": "M6", "description": "压测脚本：单IP寿命（连采到封，统计每IP商品数）", "steps": ["连续采到封", "输出每IP产出", "封控率"], "passes": true},
-  {"id": 28, "category": "infra", "milestone": "M7", "description": "部署：run_server.py + systemd/docker + 文档", "steps": ["run_server启动", "部署脚本", "README更新"], "passes": false}
+  {"id": 28, "category": "infra", "milestone": "M7", "description": "部署：run_server.py + systemd/docker + 文档", "steps": ["run_server启动", "部署脚本", "README更新"], "passes": true}
 ]

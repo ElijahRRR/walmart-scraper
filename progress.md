@@ -2,8 +2,8 @@
 
 ## 当前状态
 - Total: 28 features (M0–M7)
-- Passing: 27 / 28 (96%)
-- Current: M6 已完成，下一步 M7（#28 部署）
+- Passing: 28 / 28 (100%) ✅ 项目全部完成
+- Current: 全部完成
 
 ## 定稿决策（2026-06）
 - 架构：单进程 FastAPI + 内置 lane 池（每 lane = 1 IP，串行+限速）
@@ -91,6 +91,22 @@
 - 测试：tests/test_m5_ui.py 28 项全过；全套 143 项（M1-M5）+ 31 parser = 174 项全过；无回归
 - Issues：无
 - Next：M6 #26-27（指标仪表/压测脚本）
+
+### Session 9 — M7 完成（2026-06-03）— BUG修复 + 部署
+- 完成：feature #28（部署），并修复 init_db 迁移缺陷
+- Bug修复（启动迁移健壮化）：
+  - app/models.py 新增 EXPECTED_COLUMNS（每张表期望新增列及其 DDL 默认值）
+  - app/db.py init_db() 改造：步骤顺序调整为「先补列→再建表/索引」；新增 _migrate_add_missing_columns()（PRAGMA table_info 读现有列，缺失列执行 ALTER TABLE ADD COLUMN，防御式 warning 不抛异常）
+  - 修复场景：旧库缺 has_change/prev_*/completed_ids/total_ip_used/updated_at 列时，init_db 先补列，再 CREATE INDEX IF NOT EXISTS，不会报 "no such column"
+  - 同步修复 feature_list.json 中预存在的 Unicode 智能引号导致的 JSON 解析错误
+- #28 部署文件：
+  - deploy/walmart-scraper.service：systemd unit 示例（User/WorkingDirectory/ExecStart/EnvironmentFile/Restart 配置）
+  - Dockerfile：python:3.11-slim，VOLUME /app/data，HEALTHCHECK，CMD python3 run_server.py
+  - docker-compose.yml：单服务，volumes 持久化 data/，env_file，healthcheck
+  - README.md：项目简介、架构图、安装（本地/Docker/systemd 三种方式）、配置表、启动命令、API 速览（含 curl 示例）、Web UI 用法、压测脚本用法、已知限制
+- 测试：tests/test_m7_migration.py（12项）：旧库建库→init_db→断言补列/索引/bump_metric 正常；全套183项测试+31 parser 全过，零回归
+- Issues：feature_list.json 中 Unicode 智能引号历史遗留问题一并修复（不影响任何代码逻辑，纯文件问题）
+- Next：项目完成
 
 ### Session 5 — M3 完成（2026-06-03）
 - 完成：feature #14-18（全部通过）
