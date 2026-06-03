@@ -2,8 +2,8 @@
 
 ## 当前状态
 - Total: 28 features (M0–M7)
-- Passing: 22 / 28 (79%)
-- Current: M5（极简前端）
+- Passing: 25 / 28 (89%)
+- Current: M5 已完成，下一步 M6
 
 ## 定稿决策（2026-06）
 - 架构：单进程 FastAPI + 内置 lane 池（每 lane = 1 IP，串行+限速）
@@ -66,6 +66,16 @@
 - 验证：全套 115 项测试（M1-M4 + parser）全过；全程无真实网络请求；webhook 用 monkeypatch 打桩
 - Issues：无
 - Next：M5 #23-25（极简前端）
+
+### Session 7 — M5 完成（2026-06-03）
+- 完成：feature #23-25（全部通过）
+- #23 任务提交表单：app/web/index.html 单页 UI，三标签切换（ids/keyword/seller）；ids 多行 textarea；keyword 含 max_pages/min_price/max_price/with_detail；seller 含 seller_id/max_pages/with_detail；提交调 /collect/* 端点显示 task_id
+- #24 任务列表+进度+结果：任务列表表格（状态 badge/进度条/结果数）；自动刷新下拉（3s/10s/30s/关闭）；点「查看结果」调 /products?task_id + /listings?task_id keyset 分页，两标签切换；「加载更多」按钮；结果表格展示关键字段
+- #25 当前IP+换IP按钮：lane 卡片网格显示当前IP/寿命/使用次数/总采集商品数/封控原因；BLOCKED 状态高亮橙色卡片+警告文字；lane_id 输入框+「获取/切换 IP」调 POST /proxy/rotate，换完自动刷新显示
+- app/api.py：新增 GET /（返回 index.html，免鉴权）；挂载 StaticFiles(/static → app/web/)；import 补充 HTMLResponse/StaticFiles/Path
+- 测试：tests/test_m5_ui.py 28 项全过；全套 143 项（M1-M5）+ 31 parser = 174 项全过；无回归
+- Issues：无
+- Next：M6 #26-27（指标仪表/压测脚本）
 
 ### Session 5 — M3 完成（2026-06-03）
 - 完成：feature #14-18（全部通过）

@@ -1,6 +1,7 @@
-"""FastAPI 主应用 — M3/M4 REST API。
+"""FastAPI 主应用 — M3/M4/M5 REST API + 前端。
 
 端点清单：
+  GET  /                                — 极简 Web UI（免鉴权，M5）
   GET  /health                          — 健康检查（免鉴权）
   POST /collect/ids                     — 提交 ID 列表采集任务
   POST /collect/keyword                 — 提交关键词采集任务
@@ -13,21 +14,26 @@
   POST /proxy/rotate                    — 手动换IP（指定 lane）
   GET  /proxy/status                    — 当前所有 lane 的IP/状态
 
-鉴权：除 /health 外所有端点需要请求头 X-API-Key（与 config.API_KEY 比对）。
+鉴权：除 /health 和 GET / 外所有端点需要请求头 X-API-Key（与 config.API_KEY 比对）。
 """
 import logging
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from app import config
 from app.db import init_db, get_conn
 from app.service.tasks import create_task, get_task, list_tasks
 from app.service.lanes import get_lane_pool
+
+# 前端静态文件目录（app/web/）
+_WEB_DIR = Path(__file__).parent / "web"
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +57,10 @@ app = FastAPI(
     version="0.3.0",
     lifespan=lifespan,
 )
+
+# 挂载静态文件（app/web/ 目录，路径 /static）
+if _WEB_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(_WEB_DIR)), name="static")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,6 +140,19 @@ def _bg_run_seller(seller_id: str, max_pages: int, with_detail: bool) -> None:
         run_seller(seller_id, max_pages=max_pages, with_detail=with_detail)
     except Exception as exc:
         logger.exception("_bg_run_seller 异常: %s", exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 前端 Web UI（M5）— 免鉴权，页面内 JS 自带 X-API-Key 调后端
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse, tags=["ui"], include_in_schema=False)
+def ui_index():
+    """返回极简前端页面（app/web/index.html）。"""
+    html_file = _WEB_DIR / "index.html"
+    if not html_file.exists():
+        raise HTTPException(status_code=404, detail="前端文件不存在")
+    return HTMLResponse(content=html_file.read_text(encoding="utf-8"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

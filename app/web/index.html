@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>沃尔玛采集服务</title>
+  <style>
+    /* ── 基础 reset ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; color: #222; background: #f5f5f5; }
+
+    /* ── 顶栏 ── */
+    header { background: #0071ce; color: #fff; padding: 10px 20px; display: flex; align-items: center; gap: 12px; }
+    header h1 { font-size: 18px; font-weight: 600; }
+    header .key-wrap { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+    header label { font-size: 12px; opacity: .85; }
+    header input#apiKey { padding: 4px 8px; border: none; border-radius: 4px; font-size: 12px; width: 200px; }
+
+    /* ── 主布局 ── */
+    main { max-width: 960px; margin: 20px auto; padding: 0 16px; display: flex; flex-direction: column; gap: 20px; }
+
+    /* ── 卡片 ── */
+    .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); overflow: hidden; }
+    .card-header { background: #0071ce; color: #fff; padding: 10px 16px; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+    .card-body { padding: 16px; }
+
+    /* ── 表单 ── */
+    .tabs { display: flex; gap: 0; border-bottom: 2px solid #eee; margin-bottom: 14px; }
+    .tab { padding: 7px 16px; cursor: pointer; border-radius: 4px 4px 0 0; color: #555; border: 1px solid transparent; border-bottom: none; }
+    .tab.active { background: #0071ce; color: #fff; border-color: #0071ce; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    label.field-label { display: block; margin-bottom: 4px; font-weight: 500; color: #444; }
+    .field { margin-bottom: 12px; }
+    input[type=text], input[type=number], textarea, select {
+      width: 100%; padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;
+    }
+    textarea { height: 100px; resize: vertical; }
+    .row { display: flex; gap: 12px; }
+    .row .field { flex: 1; }
+    input[type=checkbox] { margin-right: 6px; }
+    .cb-label { display: flex; align-items: center; cursor: pointer; font-size: 13px; }
+
+    button.btn { padding: 8px 18px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    button.btn-primary { background: #0071ce; color: #fff; }
+    button.btn-primary:hover { background: #005fa3; }
+    button.btn-danger  { background: #e53e3e; color: #fff; }
+    button.btn-danger:hover  { background: #c53030; }
+    button.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    /* ── 消息横幅 ── */
+    .msg { padding: 8px 12px; border-radius: 4px; margin-top: 10px; font-size: 13px; display: none; }
+    .msg.info  { background: #e8f4fd; border: 1px solid #90caf9; color: #1565c0; }
+    .msg.ok    { background: #e8f5e9; border: 1px solid #a5d6a7; color: #2e7d32; }
+    .msg.error { background: #ffebee; border: 1px solid #ef9a9a; color: #c62828; }
+    .msg.show  { display: block; }
+
+    /* ── 任务列表 ── */
+    #taskRefreshBar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    #taskRefreshBar select { width: auto; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 7px 10px; background: #f0f4ff; color: #333; border-bottom: 2px solid #dde; }
+    td { padding: 6px 10px; border-bottom: 1px solid #eee; vertical-align: middle; }
+    tr:hover td { background: #f9f9f9; }
+
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+    .badge-pending  { background: #fff9c4; color: #795548; }
+    .badge-running  { background: #bbdefb; color: #1565c0; }
+    .badge-done     { background: #c8e6c9; color: #2e7d32; }
+    .badge-failed   { background: #ffcdd2; color: #c62828; }
+    .badge-blocked  { background: #ffe0b2; color: #e65100; }
+
+    progress { width: 80px; height: 8px; border-radius: 4px; }
+
+    /* ── 结果查看器 ── */
+    #resultPanel { display: none; }
+    #resultPanel.show { display: block; }
+    #resultNav { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+    #resultTabs { display: flex; gap: 0; }
+    #resultTabs .rtab { padding: 5px 14px; cursor: pointer; border: 1px solid #ccc; border-radius: 4px 4px 0 0; color: #555; font-size: 13px; }
+    #resultTabs .rtab.active { background: #0071ce; color: #fff; border-color: #0071ce; }
+
+    .table-wrap { overflow-x: auto; max-height: 400px; overflow-y: auto; }
+
+    /* ── 代理状态 ── */
+    .proxy-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+    .lane-card { border: 1px solid #ddd; border-radius: 6px; padding: 12px; min-width: 200px; flex: 1; }
+    .lane-card.blocked { border-color: #f90; background: #fffbe6; }
+    .lane-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+    .lane-card .kv { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #555; }
+    .lane-card .kv span { display: flex; justify-content: space-between; }
+    .lane-card .kv b { color: #222; }
+    .warn-blocked { color: #e65100; font-weight: 600; margin-top: 6px; font-size: 12px; }
+
+    /* ── 加载指示 ── */
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc; border-top-color: #0071ce; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-left: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    footer { text-align: center; color: #aaa; font-size: 11px; padding: 20px 0; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🛒 沃尔玛采集服务</h1>
+  <div class="key-wrap">
+    <label for="apiKey">X-API-Key</label>
+    <input id="apiKey" type="text" value="dev-key-change-me" placeholder="API Key" />
+  </div>
+</header>
+
+<main>
+
+  <!-- ── 任务提交 ── -->
+  <div class="card" id="submitCard">
+    <div class="card-header">📤 提交采集任务</div>
+    <div class="card-body">
+      <div class="tabs">
+        <div class="tab active" data-tab="ids">ID 列表</div>
+        <div class="tab" data-tab="keyword">关键词搜索</div>
+        <div class="tab" data-tab="seller">卖家商品</div>
+      </div>
+
+      <!-- IDs 面板 -->
+      <div class="tab-panel active" id="panel-ids">
+        <div class="field">
+          <label class="field-label">商品 ID 列表（每行一个 usItemId）</label>
+          <textarea id="ids-input" placeholder="每行一个 ID，例如：&#10;1234567890&#10;0987654321"></textarea>
+        </div>
+        <div class="field">
+          <label class="cb-label">
+            <input type="checkbox" id="ids-detail" checked />
+            采详情（二段式）
+          </label>
+        </div>
+        <button class="btn btn-primary" id="btn-submit-ids">提交采集</button>
+      </div>
+
+      <!-- Keyword 面板 -->
+      <div class="tab-panel" id="panel-keyword">
+        <div class="field">
+          <label class="field-label">搜索关键词</label>
+          <input type="text" id="kw-keyword" placeholder="例如：iphone case" />
+        </div>
+        <div class="row">
+          <div class="field">
+            <label class="field-label">最多翻页（1-25）</label>
+            <input type="number" id="kw-max-pages" value="5" min="1" max="25" />
+          </div>
+          <div class="field">
+            <label class="field-label">价格下限（可选）</label>
+            <input type="number" id="kw-min-price" placeholder="留空=不限" min="0" step="0.01" />
+          </div>
+          <div class="field">
+            <label class="field-label">价格上限（可选）</label>
+            <input type="number" id="kw-max-price" placeholder="留空=不限" min="0" step="0.01" />
+          </div>
+        </div>
+        <div class="field">
+          <label class="cb-label">
+            <input type="checkbox" id="kw-detail" checked />
+            采详情（二段式）
+          </label>
+        </div>
+        <button class="btn btn-primary" id="btn-submit-keyword">提交采集</button>
+      </div>
+
+      <!-- Seller 面板 -->
+      <div class="tab-panel" id="panel-seller">
+        <div class="field">
+          <label class="field-label">卖家 ID</label>
+          <input type="text" id="sel-seller-id" placeholder="例如：F92TEQ32EFJ9Z" />
+        </div>
+        <div class="row">
+          <div class="field">
+            <label class="field-label">最多翻页</label>
+            <input type="number" id="sel-max-pages" value="10" min="1" />
+          </div>
+        </div>
+        <div class="field">
+          <label class="cb-label">
+            <input type="checkbox" id="sel-detail" checked />
+            采详情（二段式）
+          </label>
+        </div>
+        <button class="btn btn-primary" id="btn-submit-seller">提交采集</button>
+      </div>
+
+      <div class="msg" id="submit-msg"></div>
+    </div>
+  </div>
+
+  <!-- ── 任务列表 ── -->
+  <div class="card" id="tasksCard">
+    <div class="card-header">
+      📋 任务列表
+      <span id="task-spinner" class="spinner" style="display:none"></span>
+    </div>
+    <div class="card-body">
+      <div id="taskRefreshBar">
+        <button class="btn btn-primary btn-sm" id="btn-refresh-tasks">刷新</button>
+        <label>自动刷新：
+          <select id="auto-refresh-interval">
+            <option value="0">关闭</option>
+            <option value="3000" selected>3 秒</option>
+            <option value="10000">10 秒</option>
+            <option value="30000">30 秒</option>
+          </select>
+        </label>
+      </div>
+      <div class="table-wrap">
+        <table id="tasks-table">
+          <thead>
+            <tr>
+              <th>ID</th><th>类型</th><th>状态</th><th>进度</th><th>结果</th><th>创建时间</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="tasks-tbody">
+            <tr><td colspan="7" style="text-align:center;color:#aaa">点击「刷新」加载任务列表</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 结果查看 ── -->
+  <div class="card" id="resultCard">
+    <div class="card-header">🔍 任务结果查看</div>
+    <div class="card-body">
+      <div id="resultNav">
+        <span id="resultTitle" style="font-weight:600;color:#555">请从上方任务列表点击「查看结果」</span>
+        <div id="resultTabs" style="display:none">
+          <div class="rtab active" data-rtab="products">商品详情</div>
+          <div class="rtab" data-rtab="listings">列表数据</div>
+        </div>
+        <button class="btn btn-sm btn-primary" id="btn-load-more" style="display:none">加载更多</button>
+        <button class="btn btn-sm" id="btn-close-result" style="display:none"
+                onclick="closeResult()" style="background:#eee">关闭</button>
+      </div>
+      <div class="table-wrap">
+        <table id="result-table">
+          <thead id="result-thead"><tr><td style="color:#aaa">暂无数据</td></tr></thead>
+          <tbody id="result-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 代理/IP 状态 ── -->
+  <div class="card" id="proxyCard">
+    <div class="card-header">
+      🌐 当前 IP / 代理状态
+      <span id="proxy-spinner" class="spinner" style="display:none"></span>
+    </div>
+    <div class="card-body">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" id="btn-refresh-proxy">刷新状态</button>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label class="field-label" style="margin:0">Lane ID</label>
+          <input type="number" id="rotate-lane-id" value="0" min="0" style="width:60px;padding:4px 6px;" />
+        </div>
+        <button class="btn btn-danger btn-sm" id="btn-rotate-ip">获取/切换 IP</button>
+        <span id="rotate-msg" style="font-size:12px;color:#555"></span>
+      </div>
+      <div class="proxy-grid" id="proxy-grid">
+        <p style="color:#aaa;font-size:13px">点击「刷新状态」查看代理信息</p>
+      </div>
+    </div>
+  </div>
+
+</main>
+<footer>沃尔玛采集服务 · 极简 UI · M5</footer>
+
+<script>
+// ── 工具函数 ──────────────────────────────────────────────────────────────────
+
+function apiKey() {
+  return document.getElementById('apiKey').value.trim() || 'dev-key-change-me';
+}
+
+async function apiFetch(path, opts = {}) {
+  const headers = { 'X-API-Key': apiKey(), 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  const resp = await fetch(path, { ...opts, headers });
+  return resp;
+}
+
+function showMsg(id, text, type = 'info') {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = `msg ${type} show`;
+}
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function fmtAge(sec) {
+  if (!sec && sec !== 0) return '—';
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
+  return h ? `${h}h${m}m` : m ? `${m}m${s}s` : `${s}s`;
+}
+
+// ── 标签切换 ──────────────────────────────────────────────────────────────────
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// ── 提交采集任务 ──────────────────────────────────────────────────────────────
+
+document.getElementById('btn-submit-ids').addEventListener('click', async () => {
+  const raw = document.getElementById('ids-input').value.trim();
+  const ids = raw.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!ids.length) { showMsg('submit-msg', 'ID 列表不能为空', 'error'); return; }
+  const with_detail = document.getElementById('ids-detail').checked;
+  const resp = await apiFetch('/collect/ids', {
+    method: 'POST',
+    body: JSON.stringify({ ids, with_detail }),
+  });
+  const data = await resp.json();
+  if (resp.ok) {
+    showMsg('submit-msg', `✓ 任务已提交，task_id = ${data.task_id}`, 'ok');
+  } else {
+    showMsg('submit-msg', `提交失败（${resp.status}）：${JSON.stringify(data)}`, 'error');
+  }
+});
+
+document.getElementById('btn-submit-keyword').addEventListener('click', async () => {
+  const keyword = document.getElementById('kw-keyword').value.trim();
+  if (!keyword) { showMsg('submit-msg', '关键词不能为空', 'error'); return; }
+  const max_pages = parseInt(document.getElementById('kw-max-pages').value) || 5;
+  const minRaw = document.getElementById('kw-min-price').value;
+  const maxRaw = document.getElementById('kw-max-price').value;
+  const with_detail = document.getElementById('kw-detail').checked;
+  const body = { keyword, max_pages, with_detail };
+  if (minRaw !== '') body.min_price = parseFloat(minRaw);
+  if (maxRaw !== '') body.max_price = parseFloat(maxRaw);
+  const resp = await apiFetch('/collect/keyword', { method: 'POST', body: JSON.stringify(body) });
+  const data = await resp.json();
+  if (resp.ok) {
+    showMsg('submit-msg', `✓ 任务已提交，task_id = ${data.task_id}`, 'ok');
+  } else {
+    showMsg('submit-msg', `提交失败（${resp.status}）：${JSON.stringify(data)}`, 'error');
+  }
+});
+
+document.getElementById('btn-submit-seller').addEventListener('click', async () => {
+  const seller_id = document.getElementById('sel-seller-id').value.trim();
+  if (!seller_id) { showMsg('submit-msg', '卖家 ID 不能为空', 'error'); return; }
+  const max_pages = parseInt(document.getElementById('sel-max-pages').value) || 10;
+  const with_detail = document.getElementById('sel-detail').checked;
+  const resp = await apiFetch('/collect/seller', { method: 'POST', body: JSON.stringify({ seller_id, max_pages, with_detail }) });
+  const data = await resp.json();
+  if (resp.ok) {
+    showMsg('submit-msg', `✓ 任务已提交，task_id = ${data.task_id}`, 'ok');
+  } else {
+    showMsg('submit-msg', `提交失败（${resp.status}）：${JSON.stringify(data)}`, 'error');
+  }
+});
+
+// ── 任务列表 ──────────────────────────────────────────────────────────────────
+
+let _autoRefreshTimer = null;
+
+async function loadTasks() {
+  const spinner = document.getElementById('task-spinner');
+  spinner.style.display = 'inline-block';
+  try {
+    const resp = await apiFetch('/tasks?limit=50&offset=0');
+    if (!resp.ok) { console.error('loadTasks', resp.status); return; }
+    const data = await resp.json();
+    renderTasks(data.items || []);
+  } finally {
+    spinner.style.display = 'none';
+  }
+}
+
+function renderTasks(items) {
+  const tbody = document.getElementById('tasks-tbody');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa">暂无任务</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map(t => {
+    const pct = t.total > 0 ? Math.round(t.progress / t.total * 100) : 0;
+    const progressHtml = t.total > 0
+      ? `<progress value="${t.progress}" max="${t.total}"></progress> ${pct}%`
+      : '—';
+    return `<tr>
+      <td>${t.id}</td>
+      <td>${t.type}</td>
+      <td><span class="badge badge-${t.status}">${t.status}</span></td>
+      <td>${progressHtml}</td>
+      <td>${t.result_count ?? 0}</td>
+      <td>${fmtTime(t.created_at)}</td>
+      <td><button class="btn btn-sm btn-primary" onclick="viewResult(${t.id})">查看结果</button></td>
+    </tr>`;
+  }).join('');
+}
+
+document.getElementById('btn-refresh-tasks').addEventListener('click', loadTasks);
+
+document.getElementById('auto-refresh-interval').addEventListener('change', function() {
+  clearInterval(_autoRefreshTimer);
+  const ms = parseInt(this.value);
+  if (ms > 0) {
+    _autoRefreshTimer = setInterval(loadTasks, ms);
+    loadTasks();
+  }
+});
+
+// 初始启动自动刷新（默认 3s 已选中）
+_autoRefreshTimer = setInterval(loadTasks, 3000);
+loadTasks();
+
+// ── 结果查看 ──────────────────────────────────────────────────────────────────
+
+let _currentTaskId = null;
+let _currentRtab = 'products';
+let _nextCursor = 0;
+
+const PRODUCTS_COLS = ['id','product_id','title','price','brand','in_stock','seller_count','has_change','updated_at'];
+const LISTINGS_COLS = ['id','product_id','title','price','task_id'];
+
+async function viewResult(taskId) {
+  _currentTaskId = taskId;
+  _currentRtab = 'products';
+  _nextCursor = 0;
+  document.getElementById('resultTitle').textContent = `任务 #${taskId} 的结果`;
+  document.getElementById('resultTabs').style.display = 'flex';
+  document.getElementById('btn-load-more').style.display = 'inline-block';
+  document.getElementById('btn-close-result').style.display = 'inline-block';
+
+  // 高亮 rtab
+  document.querySelectorAll('.rtab').forEach(t => {
+    t.classList.toggle('active', t.dataset.rtab === _currentRtab);
+  });
+
+  await fetchResultPage(true);
+  document.getElementById('resultCard').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function fetchResultPage(reset) {
+  const cursor = reset ? 0 : _nextCursor;
+  const isProducts = _currentRtab === 'products';
+  const path = isProducts
+    ? `/products?task_id=${_currentTaskId}&after_id=${cursor}&limit=50`
+    : `/listings?task_id=${_currentTaskId}&after_id=${cursor}&limit=50`;
+
+  const resp = await apiFetch(path);
+  if (!resp.ok) return;
+  const data = await resp.json();
+  _nextCursor = data.next_cursor;
+
+  const cols = isProducts ? PRODUCTS_COLS : LISTINGS_COLS;
+  const thead = document.getElementById('result-thead');
+  const tbody = document.getElementById('result-tbody');
+
+  if (reset) {
+    thead.innerHTML = '<tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr>';
+    tbody.innerHTML = '';
+  }
+
+  if (!data.items.length && reset) {
+    tbody.innerHTML = '<tr><td colspan="' + cols.length + '" style="text-align:center;color:#aaa">暂无数据</td></tr>';
+    return;
+  }
+
+  data.items.forEach(row => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = cols.map(c => `<td>${row[c] ?? '—'}</td>`).join('');
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('btn-load-more').addEventListener('click', () => fetchResultPage(false));
+
+document.querySelectorAll('.rtab').forEach(tab => {
+  tab.addEventListener('click', async () => {
+    _currentRtab = tab.dataset.rtab;
+    _nextCursor = 0;
+    document.querySelectorAll('.rtab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    await fetchResultPage(true);
+  });
+});
+
+function closeResult() {
+  _currentTaskId = null;
+  document.getElementById('resultTitle').textContent = '请从上方任务列表点击「查看结果」';
+  document.getElementById('resultTabs').style.display = 'none';
+  document.getElementById('btn-load-more').style.display = 'none';
+  document.getElementById('btn-close-result').style.display = 'none';
+  document.getElementById('result-thead').innerHTML = '<tr><td style="color:#aaa">暂无数据</td></tr>';
+  document.getElementById('result-tbody').innerHTML = '';
+}
+
+// ── 代理/IP 状态 ──────────────────────────────────────────────────────────────
+
+async function loadProxyStatus() {
+  const spinner = document.getElementById('proxy-spinner');
+  spinner.style.display = 'inline-block';
+  try {
+    const resp = await apiFetch('/proxy/status');
+    if (!resp.ok) { document.getElementById('proxy-grid').innerHTML = `<p style="color:red">获取失败（${resp.status}）</p>`; return; }
+    const data = await resp.json();
+    renderProxyLanes(data.lanes || []);
+  } finally {
+    spinner.style.display = 'none';
+  }
+}
+
+function renderProxyLanes(lanes) {
+  const grid = document.getElementById('proxy-grid');
+  if (!lanes.length) { grid.innerHTML = '<p style="color:#aaa">暂无 lane 信息</p>'; return; }
+  grid.innerHTML = lanes.map(lane => {
+    const blocked = lane.state === 'blocked';
+    return `<div class="lane-card ${blocked ? 'blocked' : ''}">
+      <h3>Lane ${lane.lane_id} — <span class="badge badge-${lane.state}">${lane.state}</span></h3>
+      <div class="kv">
+        <span><span>当前 IP</span><b>${lane.current_ip || '未分配'}</b></span>
+        <span><span>IP 寿命</span><b>${fmtAge(lane.ip_age_sec)}</b></span>
+        <span><span>已使用次数</span><b>${lane.ip_uses ?? 0}</b></span>
+        <span><span>总采集商品</span><b>${lane.total_products ?? 0}</b></span>
+        <span><span>最近封控原因</span><b>${lane.last_block || '无'}</b></span>
+      </div>
+      ${blocked ? '<p class="warn-blocked">⚠ 该 Lane 已封控，请换 IP 后恢复</p>' : ''}
+    </div>`;
+  }).join('');
+}
+
+document.getElementById('btn-refresh-proxy').addEventListener('click', loadProxyStatus);
+
+document.getElementById('btn-rotate-ip').addEventListener('click', async () => {
+  const lane_id = parseInt(document.getElementById('rotate-lane-id').value) || 0;
+  const msgEl = document.getElementById('rotate-msg');
+  msgEl.textContent = '正在换IP…';
+  const resp = await apiFetch('/proxy/rotate', {
+    method: 'POST',
+    body: JSON.stringify({ lane_id }),
+  });
+  const data = await resp.json();
+  if (resp.ok) {
+    msgEl.textContent = `✓ 换IP成功：${data.new_ip}（lane ${data.lane_id}）`;
+    msgEl.style.color = '#2e7d32';
+    await loadProxyStatus();
+  } else {
+    msgEl.textContent = `换IP失败（${resp.status}）：${data.detail || JSON.stringify(data)}`;
+    msgEl.style.color = '#c62828';
+  }
+});
+</script>
+</body>
+</html>
