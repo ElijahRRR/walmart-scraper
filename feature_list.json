@@ -1,9 +1,9 @@
 [
-  {"id": 1, "category": "infra", "milestone": "M0", "description": "项目骨架：app/ 目录结构、.env.example、README、依赖清单", "steps": ["app/{engine,service,web} 目录就位", "requirements.txt 含 fastapi/uvicorn/curl_cffi", ".env.example 含 PROXY_API_KEY/PACE/LANES/API_KEY"], "passes": false},
-  {"id": 2, "category": "infra", "milestone": "M0", "description": "配置模块 app/config.py：从 .env 读取代理/节奏/lane数/api key", "steps": ["导入 config 不报错", "缺省值合理", "可被 env 覆盖"], "passes": false},
-  {"id": 3, "category": "infra", "milestone": "M0", "description": "引擎文件迁入 app/engine（parser/proxy/collector），导入路径修正，测试通过", "steps": ["app/engine/{parser,proxy,collector}.py 就位", "test_parser.py 全过", "collector 导入 OK"], "passes": false},
-  {"id": 4, "category": "infra", "milestone": "M0", "description": "SQLite 库 app/db.py：WAL 模式、建表、读写连接", "steps": ["首次启动自动建表", "WAL 开启", "连接可复用"], "passes": false},
-  {"id": 5, "category": "data", "milestone": "M0", "description": "表结构 app/models.py：tasks/products/listings/proxy_log/metrics", "steps": ["5 张表 DDL", "字段含 16 商品字段+卖家数量", "建表无报错"], "passes": false},
+  {"id": 1, "category": "infra", "milestone": "M0", "description": "项目骨架：app/ 目录结构、.env.example、README、依赖清单", "steps": ["app/{engine,service,web} 目录就位", "requirements.txt 含 fastapi/uvicorn/curl_cffi", ".env.example 含 PROXY_API_KEY/PACE/LANES/API_KEY"], "passes": true},
+  {"id": 2, "category": "infra", "milestone": "M0", "description": "配置模块 app/config.py：从 .env 读取代理/节奏/lane数/api key", "steps": ["导入 config 不报错", "缺省值合理", "可被 env 覆盖"], "passes": true},
+  {"id": 3, "category": "infra", "milestone": "M0", "description": "引擎文件迁入 app/engine（parser/proxy/collector），导入路径修正，测试通过", "steps": ["app/engine/{parser,proxy,collector}.py 就位", "test_parser.py 全过", "collector 导入 OK"], "passes": true},
+  {"id": 4, "category": "infra", "milestone": "M0", "description": "SQLite 库 app/db.py：WAL 模式、建表、读写连接", "steps": ["首次启动自动建表", "WAL 开启", "连接可复用"], "passes": true},
+  {"id": 5, "category": "data", "milestone": "M0", "description": "表结构 app/models.py：tasks/products/listings/proxy_log/metrics", "steps": ["5 张表 DDL", "字段含 16 商品字段+卖家数量", "建表无报错"], "passes": true},
 
   {"id": 6, "category": "engine", "milestone": "M1", "description": "任务状态机：pending→running→done/failed/blocked，落库", "steps": ["create_task 入库", "状态流转正确", "进度字段更新"], "passes": false},
   {"id": 7, "category": "engine", "milestone": "M1", "description": "详情结果落库：parse_product 输出 → products 表 upsert", "steps": ["16字段+卖家数量入库", "重复ID upsert", "_status 非ok 不污染"], "passes": false},

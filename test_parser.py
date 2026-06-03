@@ -5,7 +5,7 @@
 """
 import json
 
-from parser import WalmartParser
+from app.engine.parser import WalmartParser
 
 
 def _wrap(product: dict, idml: dict) -> str:

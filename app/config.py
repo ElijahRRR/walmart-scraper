@@ -1,0 +1,113 @@
+"""配置模块：从环境变量（.env）读取所有服务参数，提供统一的 settings 对象。
+
+优先级：环境变量 > .env 文件 > 内置缺省值。
+"""
+import os
+from pathlib import Path
+
+# 尝试加载项目根目录的 .env 文件（可选依赖 python-dotenv；不存在则静默跳过）
+_ROOT = Path(__file__).parent.parent  # 项目根目录
+
+def _load_dotenv() -> None:
+    """简单的 .env 文件加载器（不依赖 python-dotenv）。
+    已设置的环境变量不会被覆盖（export 优先）。
+    """
+    env_file = _ROOT / ".env"
+    if not env_file.exists():
+        env_file = _ROOT / ".env.example"
+    if not env_file.exists():
+        return
+    with open(env_file, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip()
+            # 去掉行内注释（# 之后的部分，且 # 前有空格）
+            if " #" in val:
+                val = val[:val.index(" #")].strip()
+            # 已有环境变量不覆盖
+            if key not in os.environ:
+                os.environ[key] = val
+
+_load_dotenv()
+
+
+def _get(key: str, default: str) -> str:
+    return os.environ.get(key, default)
+
+
+def _get_bool(key: str, default: bool) -> bool:
+    val = os.environ.get(key)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _get_int(key: str, default: int) -> int:
+    val = os.environ.get(key)
+    if val is None:
+        return default
+    try:
+        return int(val.strip())
+    except ValueError:
+        return default
+
+
+def _get_float(key: str, default: float) -> float:
+    val = os.environ.get(key)
+    if val is None:
+        return default
+    try:
+        return float(val.strip())
+    except ValueError:
+        return default
+
+
+# ── 代理设置 ────────────────────────────────────────────────────────────────
+PROXY_API_KEY: str = _get("PROXY_API_KEY", "")
+"""cliproxy 提取 key，空字符串表示未配置（测试/本地可不填）"""
+
+# ── 采集节奏（秒） ──────────────────────────────────────────────────────────
+PACE_MIN: float = _get_float("PACE_MIN", 3.0)
+"""最短请求间隔（秒）"""
+
+PACE_MAX: float = _get_float("PACE_MAX", 7.0)
+"""最长请求间隔（秒）"""
+
+# ── Lane 并发设置 ────────────────────────────────────────────────────────────
+LANES: int = _get_int("LANES", 1)
+"""lane 数量（= 同时持有的 IP 数）；每 lane 串行采集"""
+
+AUTO_ROTATE: bool = _get_bool("AUTO_ROTATE", False)
+"""自动换 IP 开关：False=封控停下报警（默认），True=封控自动轮换"""
+
+IP_MAX_AGE_MIN: int = _get_int("IP_MAX_AGE_MIN", 690)
+"""单 IP 安全上限（分钟），默认 690 分钟（11.5h，留余量防 cliproxy 12h 掐线）"""
+
+# ── API 鉴权 ─────────────────────────────────────────────────────────────────
+API_KEY: str = _get("API_KEY", "dev-key-change-me")
+"""服务端 API Key（请求头 X-API-Key）；生产环境务必改掉"""
+
+# ── 服务设置 ─────────────────────────────────────────────────────────────────
+PORT: int = _get_int("PORT", 8900)
+"""HTTP 服务端口"""
+
+DB_PATH: str = _get("DB_PATH", "data/walmart.db")
+"""SQLite 数据库路径（相对项目根目录，或绝对路径）"""
+
+
+# ── 统一 settings 对象（字典形式，方便序列化和 FastAPI 依赖注入） ──────────────
+settings: dict = {
+    "proxy_api_key": PROXY_API_KEY,
+    "pace_min": PACE_MIN,
+    "pace_max": PACE_MAX,
+    "lanes": LANES,
+    "auto_rotate": AUTO_ROTATE,
+    "ip_max_age_min": IP_MAX_AGE_MIN,
+    "api_key": API_KEY,
+    "port": PORT,
+    "db_path": DB_PATH,
+}

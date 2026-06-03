@@ -6,8 +6,8 @@ import sys
 
 from curl_cffi import requests as cffi
 
-from parser import WalmartParser
-from proxy import ProxyPool
+from app.engine.parser import WalmartParser
+from app.engine.proxy import ProxyPool
 
 SAMPLES = [
     "https://www.walmart.com/ip/seort/14469755459",   # WFS Shark
