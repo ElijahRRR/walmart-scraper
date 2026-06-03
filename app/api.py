@@ -118,29 +118,31 @@ class ProxyRotateRequest(BaseModel):
 # 后台任务执行（在 BackgroundTasks 中运行 runner.*）
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _bg_run_ids(ids: list[str], with_detail: bool) -> None:
-    """在后台线程执行 ID 采集（不阻塞 HTTP 响应）。"""
+def _bg_run_ids(ids: list[str], with_detail: bool, task_id: Optional[int] = None) -> None:
+    """在后台线程执行 ID 采集（不阻塞 HTTP 响应）。复用 API 已建的 task_id。"""
     from app.service.runner import run_ids
     try:
-        run_ids(ids, with_detail=with_detail)
+        run_ids(ids, with_detail=with_detail, task_id=task_id)
     except Exception as exc:
         logger.exception("_bg_run_ids 异常: %s", exc)
 
 
 def _bg_run_keyword(keyword: str, max_pages: int, with_detail: bool,
-                    min_price: Optional[float], max_price: Optional[float]) -> None:
+                    min_price: Optional[float], max_price: Optional[float],
+                    task_id: Optional[int] = None) -> None:
     from app.service.runner import run_keyword
     try:
         run_keyword(keyword, max_pages=max_pages, with_detail=with_detail,
-                    min_price=min_price, max_price=max_price)
+                    min_price=min_price, max_price=max_price, task_id=task_id)
     except Exception as exc:
         logger.exception("_bg_run_keyword 异常: %s", exc)
 
 
-def _bg_run_seller(seller_id: str, max_pages: int, with_detail: bool) -> None:
+def _bg_run_seller(seller_id: str, max_pages: int, with_detail: bool,
+                   task_id: Optional[int] = None) -> None:
     from app.service.runner import run_seller
     try:
-        run_seller(seller_id, max_pages=max_pages, with_detail=with_detail)
+        run_seller(seller_id, max_pages=max_pages, with_detail=with_detail, task_id=task_id)
     except Exception as exc:
         logger.exception("_bg_run_seller 异常: %s", exc)
 
@@ -179,7 +181,7 @@ def submit_ids(body: CollectIdsRequest,
     """提交 ID 列表采集任务，立即返回 task_id，后台执行。"""
     # 先建任务记录（状态=pending），再在后台执行
     task_id = create_task("detail", {"ids": body.ids, "with_detail": body.with_detail})
-    background_tasks.add_task(_bg_run_ids, body.ids, body.with_detail)
+    background_tasks.add_task(_bg_run_ids, body.ids, body.with_detail, task_id)
     logger.info("submit_ids task_id=%d ids=%d", task_id, len(body.ids))
     return {"task_id": task_id, "status": "pending"}
 
@@ -202,7 +204,7 @@ def submit_keyword(body: CollectKeywordRequest,
     task_id = create_task("keyword", params)
     background_tasks.add_task(
         _bg_run_keyword, body.keyword, body.max_pages, body.with_detail,
-        body.min_price, body.max_price,
+        body.min_price, body.max_price, task_id,
     )
     logger.info("submit_keyword task_id=%d keyword=%r", task_id, body.keyword)
     return {"task_id": task_id, "status": "pending"}
@@ -219,7 +221,7 @@ def submit_seller(body: CollectSellerRequest,
         "with_detail": body.with_detail,
     })
     background_tasks.add_task(
-        _bg_run_seller, body.seller_id, body.max_pages, body.with_detail,
+        _bg_run_seller, body.seller_id, body.max_pages, body.with_detail, task_id,
     )
     logger.info("submit_seller task_id=%d seller_id=%s", task_id, body.seller_id)
     return {"task_id": task_id, "status": "pending"}
@@ -262,7 +264,7 @@ async def collect_import(
     if type == "ids":
         tid = create_task("detail", {"ids": tokens, "with_detail": with_detail,
                                      "source": file.filename})
-        background_tasks.add_task(_bg_run_ids, tokens, with_detail)
+        background_tasks.add_task(_bg_run_ids, tokens, with_detail, tid)
         task_ids.append(tid)
     elif type == "keyword":
         for kw in tokens:
@@ -274,13 +276,13 @@ async def collect_import(
                 params["max_price"] = max_price
             tid = create_task("keyword", params)
             background_tasks.add_task(_bg_run_keyword, kw, max_pages, with_detail,
-                                      min_price, max_price)
+                                      min_price, max_price, tid)
             task_ids.append(tid)
     else:  # seller
         for sid in tokens:
             tid = create_task("seller", {"seller_id": sid, "max_pages": max_pages,
                                          "with_detail": with_detail, "source": file.filename})
-            background_tasks.add_task(_bg_run_seller, sid, max_pages, with_detail)
+            background_tasks.add_task(_bg_run_seller, sid, max_pages, with_detail, tid)
             task_ids.append(tid)
 
     logger.info("collect_import type=%s 解析=%d 建任务=%d", type, len(tokens), len(task_ids))

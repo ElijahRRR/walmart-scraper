@@ -496,7 +496,8 @@ def _make_collector():
 
 def run_ids(ids: list[str], with_detail: bool = True,
             collector=None, webhook_url: Optional[str] = None,
-            resume_task_id: Optional[int] = None) -> int:
+            resume_task_id: Optional[int] = None,
+            task_id: Optional[int] = None) -> int:
     """流程1：指定 product_id 列表，采详情并落库。
 
     M4 新增：
@@ -525,7 +526,9 @@ def run_ids(ids: list[str], with_detail: bool = True,
         )
         update_status(task_id, "running")
     else:
-        task_id = create_task("detail", {"ids": ids})
+        # task_id 由调用方（API）提供则复用，否则新建（CLI/独立调用）
+        if task_id is None:
+            task_id = create_task("detail", {"ids": ids})
         update_status(task_id, "running")
         completed = set()
         remaining = list(ids)
@@ -576,7 +579,8 @@ def run_keyword(keyword: str, max_pages: int = 25,
                 min_price: Optional[float] = None,
                 max_price: Optional[float] = None,
                 collector=None,
-                webhook_url: Optional[str] = None) -> int:
+                webhook_url: Optional[str] = None,
+                task_id: Optional[int] = None) -> int:
     """流程2：关键词采集，列表落 listings，详情落 products。
 
     Args:
@@ -600,7 +604,8 @@ def run_keyword(keyword: str, max_pages: int = 25,
     if max_price is not None:
         params["max_price"] = max_price
 
-    task_id = create_task("keyword", params)
+    if task_id is None:  # API 传入则复用，否则新建（CLI/独立调用）
+        task_id = create_task("keyword", params)
     update_status(task_id, "running")
 
     c = collector or _make_collector()
@@ -647,7 +652,8 @@ def run_keyword(keyword: str, max_pages: int = 25,
 def run_seller(seller_id: str, max_pages: int = 30,
                with_detail: bool = True,
                collector=None,
-               webhook_url: Optional[str] = None) -> int:
+               webhook_url: Optional[str] = None,
+               task_id: Optional[int] = None) -> int:
     """流程3：卖家全店采集，列表落 listings，详情落 products。
 
     Args:
@@ -659,11 +665,12 @@ def run_seller(seller_id: str, max_pages: int = 30,
     Returns:
         task_id
     """
-    task_id = create_task("seller", {
-        "seller_id": seller_id,
-        "max_pages": max_pages,
-        "with_detail": with_detail,
-    })
+    if task_id is None:  # API 传入则复用，否则新建（CLI/独立调用）
+        task_id = create_task("seller", {
+            "seller_id": seller_id,
+            "max_pages": max_pages,
+            "with_detail": with_detail,
+        })
     update_status(task_id, "running")
 
     c = collector or _make_collector()
