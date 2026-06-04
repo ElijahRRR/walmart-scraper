@@ -119,7 +119,7 @@ const hasMore = computed<boolean>(() => {
 const panelTitle = computed(() => {
   const t = selectedTask.value as TaskItem | null
   if (!t) return '查看结果'
-  return `任务 #${t.id} — 结果查看（${t.result_count ?? 0} 条）`
+  return `${t.code ?? '任务#' + t.id} — 结果查看（${t.result_count ?? 0} 条）`
 })
 
 // ── 数据加载 ──────────────────────────────────────────────────────────────────
@@ -223,7 +223,9 @@ async function exportFile(fmt: 'csv' | 'xlsx') {
   if (!taskId.value) return
   const kind = activeTab.value // 'products' | 'listings'
   const ext = fmt === 'csv' ? 'csv' : 'xlsx'
-  const filename = `${kind}_task${taskId.value}.${ext}`
+  // 文件名用任务 code（task{id}_{日期}_{时间}），如 products_task1_20260603_111918.csv
+  const code = (selectedTask.value as TaskItem | null)?.code ?? `task${taskId.value}`
+  const filename = `${kind}_${code}.${ext}`
 
   if (fmt === 'csv') {
     exportingCsv.value = true

@@ -181,6 +181,23 @@ def update_progress(task_id: int, progress: int,
         conn.execute(sql, vals)
 
 
+def task_code(task_id: int, created_at: Optional[str]) -> str:
+    """任务可读编码：task{id}_{YYYYMMDD}_{HHMMSS}，如 'task1_20260603_111918'。
+
+    created_at 形如 '2026-06-03T11:19:18Z'；解析失败则退回 'task{id}'。
+    """
+    if created_at:
+        try:
+            date_part, time_part = created_at.split("T")
+            ymd = date_part.replace("-", "")
+            hms = time_part[:8].replace(":", "")
+            if len(ymd) == 8 and len(hms) == 6:
+                return f"task{task_id}_{ymd}_{hms}"
+        except (ValueError, AttributeError):
+            pass
+    return f"task{task_id}"
+
+
 def get_task(task_id: int) -> Optional[dict]:
     """按 id 取任务记录，不存在返回 None。"""
     with get_conn() as conn:
@@ -193,6 +210,7 @@ def get_task(task_id: int) -> Optional[dict]:
         d["params"] = json.loads(d["params"])
     except (json.JSONDecodeError, TypeError):
         pass
+    d["code"] = task_code(d["id"], d.get("created_at"))
     return d
 
 
@@ -260,5 +278,6 @@ def list_tasks(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
             d["params"] = json.loads(d["params"])
         except (json.JSONDecodeError, TypeError):
             pass
+        d["code"] = task_code(d["id"], d.get("created_at"))
         out.append(d)
     return out, total

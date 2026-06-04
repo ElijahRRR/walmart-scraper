@@ -17,6 +17,7 @@ export interface TaskItem {
   result_count: number
   created_at: string
   // 可选字段：后端 SELECT * 实际返回，TaskList/ResultViewer 按需使用
+  code?: string            // 任务可读编码 task{id}_{日期}_{时间}
   error_msg?: string | null
   updated_at?: string | null
   params?: Record<string, unknown> | null

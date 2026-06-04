@@ -294,9 +294,12 @@ onUnmounted(() => {
           class="px-4 py-3 hover:bg-gray-50 transition-colors group"
         >
           <div class="flex items-start gap-3">
-            <!-- 任务 ID + 类型 -->
-            <div class="flex-shrink-0 flex flex-col items-center gap-1 pt-0.5">
-              <span class="text-xs font-mono text-gray-400">#{{ task.id }}</span>
+            <!-- 任务编码 + 类型 -->
+            <div class="flex-shrink-0 flex flex-col items-start gap-1 pt-0.5 w-28">
+              <span class="text-[10px] font-mono text-gray-500 break-all leading-tight"
+                    :title="task.code ?? ('#' + task.id)">
+                {{ task.code ?? ('#' + task.id) }}
+              </span>
               <span class="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded font-medium">
                 {{ typeLabel(task.type) }}
               </span>

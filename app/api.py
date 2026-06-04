@@ -486,7 +486,12 @@ def export_data(
     headers = [label for _, label in col_defs]
 
     dict_rows = [dict(r) for r in rows]
-    suffix = f"_task{task_id}" if task_id is not None else "_all"
+    # 文件名用任务 code（task{id}_{日期}_{时间}），如 products_task1_20260603_111918.csv
+    if task_id is not None:
+        task = get_task(task_id)
+        suffix = "_" + (task["code"] if task else f"task{task_id}")
+    else:
+        suffix = "_all"
     fname = f"{kind}{suffix}.{fmt}"
 
     def row_values(r: dict) -> list:
