@@ -62,6 +62,8 @@ const productsNextCursor = ref<number | null>(null)
 const productsTotal = ref<number>(0)
 const productsLoading = ref(false)
 const productsError = ref<string | null>(null)
+/** 末页标志：最后一次响应条数 < PAGE_SIZE，说明无更多数据（P2-13 fix） */
+const productsReachedEnd = ref(false)
 
 /** listings 分页状态 */
 const listingsItems = ref<Listing[]>([])
@@ -69,6 +71,15 @@ const listingsNextCursor = ref<number | null>(null)
 const listingsTotal = ref<number>(0)
 const listingsLoading = ref(false)
 const listingsError = ref<string | null>(null)
+/** 末页标志：最后一次响应条数 < PAGE_SIZE，说明无更多数据（P2-13 fix） */
+const listingsReachedEnd = ref(false)
+
+/**
+ * 当前飞行中的任务 ID。
+ * 切任务时更新此值，旧请求完成后对比 activeTaskId 若不匹配则丢弃结果，
+ * 防止任务 A 的响应覆盖任务 B 的数据（P1-5 fix）。
+ */
+const activeTaskId = ref<number | null>(null)
 
 /** 导出状态 */
 const exportingCsv = ref(false)
@@ -94,9 +105,14 @@ const currentLoading = computed<boolean>(() =>
 const currentError = computed<string | null>(() =>
   activeTab.value === 'products' ? productsError.value : listingsError.value,
 )
+/**
+ * 是否还有更多数据。
+ * 不依赖 next_cursor（后端末页返回 0 而非 null，?? 无法处理），
+ * 改用末页标志位（由响应 count < PAGE_SIZE 推导），彻底解决 P2-13。
+ */
 const hasMore = computed<boolean>(() => {
-  if (activeTab.value === 'products') return productsNextCursor.value !== null
-  return listingsNextCursor.value !== null
+  if (activeTab.value === 'products') return !productsReachedEnd.value
+  return !listingsReachedEnd.value
 })
 
 /** 面板标题：任务 ID + 任务类型 */
@@ -108,7 +124,7 @@ const panelTitle = computed(() => {
 
 // ── 数据加载 ──────────────────────────────────────────────────────────────────
 
-/** 加载 products 第一页（重置） */
+/** 加载 products（reset=true 时从头加载） */
 async function loadProducts(reset = false) {
   if (!taskId.value) return
   if (productsLoading.value) return
@@ -118,27 +134,39 @@ async function loadProducts(reset = false) {
     productsItems.value = []
     productsNextCursor.value = null
     productsTotal.value = 0
+    productsReachedEnd.value = false
   }
+  // 记录本次请求发起时的任务 ID，用于后续校验（P1-5）
+  const requestedTaskId = taskId.value
   try {
     const params: Record<string, unknown> = {
-      task_id: taskId.value,
+      task_id: requestedTaskId,
       limit: PAGE_SIZE,
     }
     if (productsNextCursor.value !== null) {
       params.after_id = productsNextCursor.value
     }
     const res = await api.get<PagedResponse<Product>>('/products', params)
-    productsItems.value.push(...(res.items ?? []))
+    // 若任务已切走，丢弃旧任务的响应，避免数据错位（P1-5）
+    if (activeTaskId.value !== requestedTaskId) return
+    const items = res.items ?? []
+    productsItems.value.push(...items)
     productsNextCursor.value = res.next_cursor ?? null
     productsTotal.value = productsItems.value.length
+    // count < PAGE_SIZE 说明这是末页（P2-13）
+    productsReachedEnd.value = items.length < PAGE_SIZE
   } catch (e: unknown) {
-    productsError.value = e instanceof Error ? e.message : '加载失败'
+    if (activeTaskId.value === requestedTaskId) {
+      productsError.value = e instanceof Error ? e.message : '加载失败'
+    }
   } finally {
-    productsLoading.value = false
+    if (activeTaskId.value === requestedTaskId) {
+      productsLoading.value = false
+    }
   }
 }
 
-/** 加载 listings 第一页（重置） */
+/** 加载 listings（reset=true 时从头加载） */
 async function loadListings(reset = false) {
   if (!taskId.value) return
   if (listingsLoading.value) return
@@ -148,23 +176,35 @@ async function loadListings(reset = false) {
     listingsItems.value = []
     listingsNextCursor.value = null
     listingsTotal.value = 0
+    listingsReachedEnd.value = false
   }
+  // 记录本次请求发起时的任务 ID，用于后续校验（P1-5）
+  const requestedTaskId = taskId.value
   try {
     const params: Record<string, unknown> = {
-      task_id: taskId.value,
+      task_id: requestedTaskId,
       limit: PAGE_SIZE,
     }
     if (listingsNextCursor.value !== null) {
       params.after_id = listingsNextCursor.value
     }
     const res = await api.get<PagedResponse<Listing>>('/listings', params)
-    listingsItems.value.push(...(res.items ?? []))
+    // 若任务已切走，丢弃旧任务的响应，避免数据错位（P1-5）
+    if (activeTaskId.value !== requestedTaskId) return
+    const items = res.items ?? []
+    listingsItems.value.push(...items)
     listingsNextCursor.value = res.next_cursor ?? null
     listingsTotal.value = listingsItems.value.length
+    // count < PAGE_SIZE 说明这是末页（P2-13）
+    listingsReachedEnd.value = items.length < PAGE_SIZE
   } catch (e: unknown) {
-    listingsError.value = e instanceof Error ? e.message : '加载失败'
+    if (activeTaskId.value === requestedTaskId) {
+      listingsError.value = e instanceof Error ? e.message : '加载失败'
+    }
   } finally {
-    listingsLoading.value = false
+    if (activeTaskId.value === requestedTaskId) {
+      listingsLoading.value = false
+    }
   }
 }
 
@@ -231,17 +271,30 @@ watch(
   () => selectedTask.value,
   (task) => {
     if (task) {
-      // 重置两个子标签的数据，然后加载当前激活标签
+      // 先更新 activeTaskId，使正在飞行中的旧请求完成后自动丢弃其结果（P1-5）
+      activeTaskId.value = task.id
+
+      // 重置两个子标签的数据
       activeTab.value = 'products'
       productsItems.value = []
       productsNextCursor.value = null
       productsTotal.value = 0
       productsError.value = null
+      productsReachedEnd.value = false
       listingsItems.value = []
       listingsNextCursor.value = null
       listingsTotal.value = 0
       listingsError.value = null
+      listingsReachedEnd.value = false
+
+      // 显式清除 loading 标志，防止旧请求的 loading=true 阻断新任务的加载守卫（P1-5）
+      productsLoading.value = false
+      listingsLoading.value = false
+
       loadProducts(true)
+    } else {
+      // 任务关闭时同步清空 activeTaskId
+      activeTaskId.value = null
     }
   },
   { immediate: false },

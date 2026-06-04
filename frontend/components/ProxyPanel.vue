@@ -164,21 +164,25 @@
         <div class="flex items-end gap-2">
           <div class="field flex-1 mb-0">
             <label class="field-label">手动指定 Lane ID</label>
+            <!-- P2-12: 类型改 number；placeholder 不再示例字符串格式 -->
             <input
               v-model="manualLaneId"
-              type="text"
-              placeholder="输入 Lane ID，例如 lane_0"
+              type="number"
+              min="0"
+              step="1"
+              placeholder="输入 Lane ID，例如 0"
               @keydown.enter="rotateManualLane"
             />
           </div>
+          <!-- P2-12: disabled/spin 比较改用 parseInt 后的数字，与 rotatingLane(number) 一致 -->
           <button
             class="btn btn-primary shrink-0"
-            :disabled="!manualLaneId.trim() || rotatingLane === manualLaneId.trim()"
+            :disabled="Number.isNaN(parseInt(manualLaneId.trim(), 10)) || rotatingLane === parseInt(manualLaneId.trim(), 10)"
             @click="rotateManualLane"
           >
             <svg
               class="w-3.5 h-3.5"
-              :class="{ 'animate-spin': rotatingLane === manualLaneId.trim() }"
+              :class="{ 'animate-spin': rotatingLane === parseInt(manualLaneId.trim(), 10) && !Number.isNaN(parseInt(manualLaneId.trim(), 10)) }"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -216,8 +220,9 @@
 
 <script setup lang="ts">
 // 代理 Lane 的数据结构（与后端 /proxy/status 返回一致）
+// P2-12: lane_id 后端返回 number（Python int），此处修正为 number
 interface ProxyLane {
-  lane_id: string
+  lane_id: number
   state: string          // 'active' | 'blocked' | 'idle' | 其他
   current_ip: string
   ip_age_sec: number
@@ -230,10 +235,11 @@ interface ProxyStatusResponse {
   lanes: ProxyLane[]
 }
 
+// P3-6: lane_status 后端实际返回 9 字段 dict，取 .state 字段；用 unknown 兼容两种情况
 interface RotateResponse {
-  lane_id: string
+  lane_id: number
   new_ip: string
-  lane_status: string
+  lane_status: string | Record<string, unknown>
 }
 
 interface RotateResult {
@@ -247,13 +253,17 @@ const api = useApi()
 const lanes = ref<ProxyLane[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
+// P2-12: manualLaneId 存字符串（input value），提交时 parseInt 转 number
 const manualLaneId = ref('')
-const rotatingLane = ref<string | null>(null)
+// P2-12: rotatingLane 改为 number | null，与 lane_id 类型一致
+const rotatingLane = ref<number | null>(null)
 const rotateResult = ref<RotateResult | null>(null)
 const refreshInterval = ref(10000)
 
 // 定时器句柄
 let intervalHandle: ReturnType<typeof setInterval> | null = null
+// P3-8: 存储 setTimeout 句柄，以便在新调用前清除及 onUnmounted 时清除
+let resultTimer: ReturnType<typeof setTimeout> | null = null
 
 // ── 格式化 IP 寿命（秒 → 可读字符串）────────────────────────────────────────
 function fmtAge(sec: number | null | undefined): string {
@@ -300,15 +310,19 @@ async function fetchStatus(): Promise<void> {
 }
 
 // ── 切换指定 Lane 的 IP ───────────────────────────────────────────────────────
-async function rotateLane(laneId: string): Promise<void> {
-  if (!laneId.trim()) return
+// P2-12: laneId 改为 number，与后端 int 字段一致
+async function rotateLane(laneId: number): Promise<void> {
   rotatingLane.value = laneId
   rotateResult.value = null
   try {
     const resp = await api.post<RotateResponse>('/proxy/rotate', { lane_id: laneId })
+    // P3-6: lane_status 后端返回 dict，取 .state；若已是字符串则直接用
+    const statusStr = typeof resp.lane_status === 'object' && resp.lane_status !== null
+      ? String((resp.lane_status as Record<string, unknown>).state ?? 'unknown')
+      : String(resp.lane_status ?? 'unknown')
     rotateResult.value = {
       success: true,
-      message: `Lane ${resp.lane_id} 已切换 → ${resp.new_ip}（状态：${resp.lane_status}）`,
+      message: `Lane ${resp.lane_id} 已切换 → ${resp.new_ip}（状态：${statusStr}）`,
     }
     // 切换成功后立即刷新 Lane 列表
     await fetchStatus()
@@ -319,19 +333,27 @@ async function rotateLane(laneId: string): Promise<void> {
     }
   } finally {
     rotatingLane.value = null
+    // P3-8: 清除上一个计时器再重新设置，避免组件卸载后写已卸载组件
+    if (resultTimer !== null) {
+      clearTimeout(resultTimer)
+    }
     // 5 秒后自动清除结果提示
-    setTimeout(() => { rotateResult.value = null }, 5000)
+    resultTimer = setTimeout(() => { rotateResult.value = null }, 5000)
   }
 }
 
 // 卡片内的快捷切换
-function rotateSpecificLane(laneId: string): void {
+// P2-12: lane_id 已是 number，直接传入
+function rotateSpecificLane(laneId: number): void {
   rotateLane(laneId)
 }
 
 // 手动输入框切换
+// P2-12: 手动输入框值为字符串，parseInt 后传入；NaN 时拒绝提交
 function rotateManualLane(): void {
-  rotateLane(manualLaneId.value.trim())
+  const parsed = parseInt(manualLaneId.value.trim(), 10)
+  if (Number.isNaN(parsed)) return
+  rotateLane(parsed)
 }
 
 // ── 自动刷新控制 ───────────────────────────────────────────────────────────────
@@ -361,5 +383,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopAutoRefresh()
+  // P3-8: 组件卸载时清除结果提示计时器，防止写已卸载组件触发 Vue 警告
+  if (resultTimer !== null) {
+    clearTimeout(resultTimer)
+    resultTimer = null
+  }
 })
 </script>

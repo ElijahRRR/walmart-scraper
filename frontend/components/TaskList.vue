@@ -32,6 +32,10 @@ const intervalOptions = [3, 5, 10, 30, 60]
 const refreshInterval = ref(5) // 默认 5 秒
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
+// ─── 标志：用户是否已点过「加载更多」 ─────────────────────────
+// true 时轮询不重置页面，只刷新已加载范围
+const hasLoadedMore = ref(false)
+
 // ─── 获取任务列表 ─────────────────────────────────────────────
 async function fetchTasks(reset = false) {
   if (loading.value) return
@@ -57,8 +61,55 @@ async function fetchTasks(reset = false) {
     } else {
       tasks.value.push(...res.items)
     }
+    // 优先使用后端返回的 total（BE1 已添加），fallback 到本次条数
     total.value = res.total ?? res.items.length
     offset.value += res.items.length
+  } catch (e: unknown) {
+    error.value = e instanceof Error ? e.message : '获取任务列表失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+/**
+ * 轮询专用刷新：
+ * - 用户未展开「加载更多」时：正常 reset，始终显示最新 limit 条
+ * - 用户已展开「加载更多」后：分批拉取已加载范围，原地更新（不重置滚动位置），
+ *   避免静默清除用户浏览位置
+ */
+async function pollRefresh() {
+  if (loading.value) return
+
+  if (!hasLoadedMore.value) {
+    // 未展开更多：普通 reset 即可
+    await fetchTasks(true)
+    return
+  }
+
+  // 已展开更多：按 offset 分批重新拉取，覆盖当前数据而不清空列表
+  const loadedCount = tasks.value.length
+  if (loadedCount === 0) {
+    await fetchTasks(true)
+    return
+  }
+
+  loading.value = true
+  error.value = ''
+  try {
+    interface TasksResponse {
+      items: TaskItem[]
+      total: number
+    }
+
+    // 一次拉取已加载的全部条数（后端无限制，或 loadedCount 不超 limit 时等价于 reset）
+    const res = await api.get<TasksResponse>('/tasks', {
+      limit: loadedCount,
+      offset: 0,
+    })
+    tasks.value = res.items
+    total.value = res.total ?? res.items.length
+    // 保持 offset = 已加载数量，让「加载更多」仍可续加
+    offset.value = res.items.length
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '获取任务列表失败'
   } finally {
@@ -70,7 +121,7 @@ async function fetchTasks(reset = false) {
 function startPolling() {
   stopPolling()
   pollTimer = setInterval(() => {
-    fetchTasks(true)
+    pollRefresh()
   }, refreshInterval.value * 1000)
 }
 
@@ -93,6 +144,8 @@ function manualRefresh() {
 
 // ─── 加载更多 ─────────────────────────────────────────────────
 function loadMore() {
+  // 标记用户已展开更多，轮询时不再 reset 回首页
+  hasLoadedMore.value = true
   fetchTasks(false)
 }
 
@@ -132,12 +185,12 @@ function progressColor(task: TaskItem): string {
 }
 
 // ─── 任务类型标签 ─────────────────────────────────────────────
+// 键与后端 tasks.py VALID_TYPES 保持一致：detail / keyword / seller
 function typeLabel(type: string): string {
   const map: Record<string, string> = {
-    ids: 'ID采集',
+    detail: 'ID采集',
     keyword: '关键词',
     seller: '店铺',
-    import: '导入',
   }
   return map[type] ?? type
 }
@@ -286,14 +339,29 @@ onUnmounted(() => {
                 />
               </div>
 
-              <!-- 创建时间 -->
+              <!-- 错误信息（blocked/failed 时显示 error_msg） -->
+              <p v-if="task.error_msg && (task.status === 'failed' || task.status === 'blocked')"
+                class="text-xs text-red-500 truncate mt-1"
+                :title="task.error_msg">
+                {{ task.error_msg }}
+              </p>
+
+              <!-- 创建时间 / 更新时间 -->
               <p class="text-xs text-gray-400">
                 <svg class="w-3 h-3 inline mr-0.5 -mt-0.5" viewBox="0 0 20 20" fill="currentColor">
                   <path fill-rule="evenodd"
                     d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
                     clip-rule="evenodd" />
                 </svg>
-                {{ formatTime(task.created_at) }}
+                <!-- 优先展示 updated_at（运行中/完成状态下更有参考价值） -->
+                <template v-if="task.updated_at && task.updated_at !== task.created_at">
+                  {{ formatTime(task.created_at) }}
+                  <span class="text-gray-300 mx-1">→</span>
+                  {{ formatTime(task.updated_at) }}
+                </template>
+                <template v-else>
+                  {{ formatTime(task.created_at) }}
+                </template>
               </p>
             </div>
 

@@ -109,12 +109,16 @@ export function useApi() {
 
   /**
    * 文件下载（GET blob），触发浏览器保存对话框
+   * 仅在客户端执行（依赖 document/URL API），SSR 下直接返回
    */
   async function download(
     path: string,
     params?: Record<string, unknown>,
     filename?: string,
   ): Promise<void> {
+    // SSR 守卫：document/URL.createObjectURL 在 Node 环境不存在
+    if (!import.meta.client) return
+
     const res = await fetch(buildUrl(path, params), {
       method: 'GET',
       headers: headers(),
