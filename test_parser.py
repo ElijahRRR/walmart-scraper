@@ -131,6 +131,7 @@ def main():
     ok &= check("gtin13=0046013460691", r["gtin13"] == "0046013460691")
     ok &= check("rating=4.3 / reviews=42916", r["rating"] == 4.3 and r["reviews"] == 42916)
     ok &= check("product_details 2条", len(r["product_details"]) == 2)
+    ok &= check("weight=9.25 lb", r["weight"] == "9.25 lb")
 
     print("● 2. 第三方 WFS Shark (FC, 免邮)")
     r = p.parse_product(SHARK)

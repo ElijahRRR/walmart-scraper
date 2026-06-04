@@ -287,6 +287,32 @@ class WalmartParser:
             for s in specs
             if isinstance(s, dict)
         ]
+        # 重量：从规格里抽出来做独立字段（沃尔玛只有产品自重，无单独运输重量）
+        r["weight"] = self._extract_weight(specs)
+
+    @staticmethod
+    def _extract_weight(specs: list) -> Optional[str]:
+        """从 specifications 抽产品重量(含单位字符串, 如 '9.25 lb')。
+
+        优先级：Assembled Product Weight > Item/Product/Shipping Weight > Weight。
+        """
+        by_name: Dict[str, Any] = {}
+        for s in specs:
+            if not isinstance(s, dict):
+                continue
+            name = (s.get("name") or "").strip().lower()
+            # "weight increment" 等非重量字段排除
+            if "weight" in name and "increment" not in name:
+                by_name[name] = s.get("value")
+        for key in ("assembled product weight", "item weight", "product weight",
+                    "shipping weight", "weight"):
+            if by_name.get(key):
+                return _clean_str(by_name[key])
+        # 兜底：任意含 weight 的第一个非空值
+        for v in by_name.values():
+            if v:
+                return _clean_str(v)
+        return None
 
 
 # ----------------------------------------------------------------------

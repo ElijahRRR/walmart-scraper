@@ -30,6 +30,7 @@ PRODUCT_COLUMNS: list[tuple[str, str]] = [
     ("url",                   "商品链接"),
     ("long_description_text", "详情描述"),
     ("product_details",       "规格参数"),
+    ("weight",                "重量"),
     ("snapshot_at",           "采集时间"),
     ("task_id",               "任务ID"),
 ]
