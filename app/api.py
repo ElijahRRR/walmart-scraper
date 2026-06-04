@@ -49,8 +49,11 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动时初始化 SQLite 库。"""
+    """启动时初始化 SQLite 库 + 复位重启中断的僵尸任务。"""
     init_db()
+    # 服务重启会杀掉后台采集线程，残留的 pending/running 任务需复位为 failed
+    from app.service.tasks import reconcile_interrupted_tasks
+    reconcile_interrupted_tasks()
     logger.info("应用启动，DB 就绪，端口 %d", config.PORT)
     yield
     logger.info("应用关闭")

@@ -31,6 +31,30 @@ VALID_STATUSES = {"pending", "running", "done", "failed", "blocked"}
 VALID_TYPES = {"detail", "keyword", "seller"}
 
 
+def reconcile_interrupted_tasks() -> int:
+    """启动时调用：把残留的 pending/running 任务标记为 failed。
+
+    后台任务线程随进程退出而死，服务重启后这些任务不会有人继续执行，
+    却在库里留着 pending/running 状态（"僵尸任务"）。启动时统一复位，
+    避免列表里出现永远"在跑"却早已死掉的任务。
+
+    Returns:
+        被复位的任务数。
+    """
+    from app.db import get_conn
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE tasks SET status='failed', "
+            "error_msg='服务重启中断（未完成，请重新提交）', "
+            "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+            "WHERE status IN ('pending','running')"
+        )
+        n = cur.rowcount
+    if n:
+        logger.warning("启动复位：%d 个残留 pending/running 任务标记为 failed", n)
+    return n
+
+
 def create_task(type_: str, params: dict) -> int:
     """创建任务，初始状态 pending，返回 task_id。
 
