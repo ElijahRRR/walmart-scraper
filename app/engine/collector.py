@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 WALMART = "https://www.walmart.com"
 MAX_RETRY = 2          # 单次请求因封控换 IP 的最大重试
 SEARCH_PAGE_CAP = 25   # 沃尔玛搜索硬上限
+PAGE_RETRY = 2         # 翻页时单页取失败/被封的重试次数（软封多为瞬时，重试可恢复）
 # GetAllSellerOffers 持久化 query hash（Walmart 改版会变，到时从浏览器网络重新抓）
 ALL_SELLERS_HASH = "234bb53653540400f507595cf2d5471b173cd0105323409ded5fffa05c083bce"
 
@@ -179,13 +180,21 @@ class WalmartCollector:
 
         truncated = False  # True = 翻页中途被封/请求失败而提前停（数据不完整）
         for page in range(start_page, max_pages + 1):
-            html = self._get(url_fmt.format(page=page),
-                             lambda h: '__NEXT_DATA__' in h)
+            # 软封多为瞬时（详情阶段能恢复说明列表页重试也能）→ 同页重试几次再放弃
+            html = None
+            for attempt in range(PAGE_RETRY + 1):
+                html = self._get(url_fmt.format(page=page),
+                                 lambda h: '__NEXT_DATA__' in h)
+                if html is not None:
+                    break
+                if attempt < PAGE_RETRY:
+                    logger.warning("[列表 p%d] 取页失败/被封，重试 %d/%d",
+                                   page, attempt + 1, PAGE_RETRY)
             if html is None:
-                # _get 返回 None：封控(200挑战页)/请求失败 → 翻页被截断，数据不完整
+                # 重试仍失败 → 翻页被截断，数据不完整
                 truncated = True
-                logger.warning("[列表 p%d] 取页失败/被封，翻页中断，累计 %d 件（不完整）",
-                               page, len(items))
+                logger.warning("[列表 p%d] 重试 %d 次仍失败，翻页中断，累计 %d 件（不完整）",
+                               page, PAGE_RETRY, len(items))
                 break
             res = parse_listing(html)
             fresh = [it for it in res["items"]

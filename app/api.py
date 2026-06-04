@@ -54,6 +54,18 @@ async def lifespan(app: FastAPI):
     # 服务重启会杀掉后台采集线程，残留的 pending/running 任务需复位为 failed
     from app.service.tasks import reconcile_interrupted_tasks
     reconcile_interrupted_tasks()
+    # 预热代理：复用磁盘缓存的 IP（**不提取新IP**），让 /proxy/status 重启后立即可见、确认跨重启复用
+    try:
+        from app.service.lanes import get_lane_pool
+        pool0 = get_lane_pool()._lanes[0]._pool
+        if pool0._load_state():
+            st = pool0.get_status()
+            logger.info("复用磁盘缓存代理 IP（跨重启）：%s（存活 %.0f 分钟）",
+                        st.get("proxy"), st.get("age_min", 0))
+        else:
+            logger.info("无可复用的代理缓存，将在首次采集时提取")
+    except Exception:
+        logger.warning("代理预热失败（不影响启动）", exc_info=True)
     logger.info("应用启动，DB 就绪，端口 %d", config.PORT)
     yield
     logger.info("应用关闭")
