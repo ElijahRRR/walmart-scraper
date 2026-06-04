@@ -55,9 +55,10 @@ class TestExport(unittest.TestCase):
         self.assertIn("text/csv", r.headers["content-type"])
         self.assertIn("attachment", r.headers["content-disposition"])
         text = r.content.decode("utf-8-sig")
-        self.assertIn("product_id", text)       # 表头
+        self.assertIn("产品ID", text)            # 中文表头
+        self.assertIn("标题", text)
         self.assertIn("111", text)
-        self.assertIn("中文标题 A", text)        # 中文正常
+        self.assertIn("中文标题 A", text)        # 中文内容正常
 
     def test_xlsx_export(self):
         r = self.client.get("/export/products?fmt=xlsx&task_id=" + str(self.tid) + "", headers=self._h())

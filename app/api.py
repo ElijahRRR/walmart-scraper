@@ -468,20 +468,27 @@ def export_data(
         else:
             rows = conn.execute(f"SELECT * FROM {kind} ORDER BY id ASC").fetchall()
 
+    # 中文列定义（顺序/名称在 app/export_schema.py 调整）
+    from app.export_schema import COLUMNS_BY_KIND, render_cell
+    col_defs = COLUMNS_BY_KIND[kind]          # [(db_col, 中文表头), ...]
+    headers = [label for _, label in col_defs]
+
     dict_rows = [dict(r) for r in rows]
-    columns = list(dict_rows[0].keys()) if dict_rows else []
     suffix = f"_task{task_id}" if task_id is not None else "_all"
     fname = f"{kind}{suffix}.{fmt}"
+
+    def row_values(r: dict) -> list:
+        return [render_cell(col, r.get(col)) for col, _ in col_defs]
 
     if fmt == "csv":
         import csv
         import io
         buf = io.StringIO()
         buf.write("﻿")  # BOM，让 Excel 正确识别 UTF-8 中文
-        writer = csv.DictWriter(buf, fieldnames=columns)
-        if columns:
-            writer.writeheader()
-            writer.writerows(dict_rows)
+        writer = csv.writer(buf)
+        writer.writerow(headers)
+        for r in dict_rows:
+            writer.writerow(row_values(r))
         from fastapi.responses import Response
         return Response(
             content=buf.getvalue(),
@@ -496,10 +503,9 @@ def export_data(
     wb = Workbook()
     ws = wb.active
     ws.title = kind
-    if columns:
-        ws.append(columns)
-        for r in dict_rows:
-            ws.append([r.get(c) for c in columns])
+    ws.append(headers)
+    for r in dict_rows:
+        ws.append(row_values(r))
     bio = io.BytesIO()
     wb.save(bio)
     return Response(
