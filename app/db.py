@@ -28,6 +28,38 @@ def _resolve_db_path() -> Path:
     return p
 
 
+def backup_db(keep: int = 10) -> Path | None:
+    """把当前 DB 备份到 data/backups/walmart_YYYYMMDD_HHMMSS.db，保留最近 keep 份。
+
+    仅在 DB 存在且非空（>8KB，即已有数据/表）时备份。返回备份路径或 None。
+    防呆：万一 DB 被误删/重置，可从备份恢复。
+    """
+    import shutil
+    from datetime import datetime
+
+    src = _resolve_db_path()
+    if not src.exists() or src.stat().st_size < 8192:
+        return None
+    backup_dir = src.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dst = backup_dir / f"walmart_{ts}.db"
+    try:
+        shutil.copy2(src, dst)
+    except OSError as exc:
+        logger.warning("DB 备份失败（不影响启动）: %s", exc)
+        return None
+    # 清理旧备份，只留最近 keep 份
+    backups = sorted(backup_dir.glob("walmart_*.db"))
+    for old in backups[:-keep]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    logger.info("DB 已备份：%s（保留最近 %d 份）", dst.name, keep)
+    return dst
+
+
 def _get_existing_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     """用 PRAGMA table_info 读取表中现有列名，表不存在时返回空集合。"""
     try:

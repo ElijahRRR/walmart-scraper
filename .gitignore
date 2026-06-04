@@ -4,3 +4,4 @@ __pycache__/
 proxy_state.json
 data/*.db
 data/*.db-*
+data/backups/
