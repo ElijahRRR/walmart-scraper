@@ -459,7 +459,7 @@ def _maybe_fire_webhook(task_id: int, webhook_url: Optional[str] = None) -> None
 # 失败重试辅助（M4）
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _collect_with_retry(collector, product_id: str) -> dict:
+def _collect_with_retry(collector, product_id: str, url: Optional[str] = None) -> dict:
     """带重试地采集单个商品详情。
 
     规则：
@@ -467,13 +467,16 @@ def _collect_with_retry(collector, product_id: str) -> dict:
       - 瞬时失败（异常 or _status 非封控的失败）→ 最多重试 RETRY_MAX 次
       - 超过重试上限 → 返回 {"_status": "give_up", "product_id": product_id}
 
+    Args:
+        url: 可选，列表项的 canonicalUrl（比 bare /ip/{id} 更可靠，关键词/卖家流程用）。
+
     Returns:
         采集结果 dict（含 _status 字段）
     """
     last_exc: Optional[Exception] = None
     for attempt in range(RETRY_MAX + 1):
         try:
-            r = collector.collect_detail(product_id)
+            r = collector.collect_detail(product_id, url)
         except Exception as exc:
             last_exc = exc
             logger.warning(
@@ -680,6 +683,63 @@ def run_ids(ids: list[str], with_detail: bool = True,
     return task_id
 
 
+_SOFT_BLOCK_THRESHOLD = 2  # 整轮 give_up 达此数且入库 0 → 疑似软封
+
+
+def _process_listing(c, lane, task_id: int, listing: list, with_detail: bool,
+                     webhook_url: Optional[str], label: str) -> tuple[str, int]:
+    """关键词/卖家采集的第二步：列表落库 +（可选）逐个采详情，带**增量进度**。
+
+    两步进度：
+      阶段1（调用方已完成翻页拿到 listing）→ 这里把 total 设为 len(listing)、progress=0；
+      阶段2（with_detail）→ 逐个 collect_detail，每个完成后 progress+1，所以前端看到数量递增。
+
+    Returns:
+        (outcome, result_count)；outcome ∈ {"done","blocked"}。
+        outcome="blocked" 时已 update_status(blocked)+webhook，调用方直接 return。
+    """
+    written = save_listing_items(listing, task_id)
+    total = len(listing)
+    # 阶段1完成：total 跳到 N（前端从 0/0 → 0/N）
+    update_progress(task_id, progress=0, total=total, result_count=written)
+
+    if not with_detail:
+        return ("done", written)
+
+    result_count = 0
+    give_up = 0
+    for i, it in enumerate(listing, 1):
+        r = _collect_with_retry(c, it["product_id"], it.get("url"))
+        if r.get("_status") in BLOCKED_STATUSES:
+            if lane is not None:
+                try:
+                    lane.notify_blocked(f"封控 {label} product_id={it['product_id']}")
+                except Exception as _exc:
+                    logger.warning("lane.notify_blocked 失败: %s", _exc)
+            update_status(task_id, "blocked",
+                          error_msg=f"封控 product_id={it['product_id']}")
+            _maybe_fire_webhook(task_id, webhook_url)
+            return ("blocked", result_count)
+        if save_product(r, task_id, lane=lane):
+            result_count += 1
+        else:
+            give_up += 1
+        # 阶段2：每采一个详情，进度 +1（前端数量随之变动）
+        update_progress(task_id, progress=i, total=total, result_count=result_count)
+
+    # 软封检测：要采详情却全部失败
+    if total > 0 and result_count == 0 and give_up >= _SOFT_BLOCK_THRESHOLD:
+        logger.warning("%s 疑似软封：%d 项详情全部失败，入库 0", label, give_up)
+        if lane is not None:
+            lane.notify_blocked(f"疑似软封：{label} {give_up} 项全部失败")
+        update_status(task_id, "blocked",
+                      error_msg=f"疑似软封：{give_up} 项详情全部失败，入库 0")
+        _maybe_fire_webhook(task_id, webhook_url)
+        return ("blocked", 0)
+
+    return ("done", result_count)
+
+
 def run_keyword(keyword: str, max_pages: int = 25,
                 with_detail: bool = True,
                 min_price: Optional[float] = None,
@@ -727,28 +787,21 @@ def run_keyword(keyword: str, max_pages: int = 25,
     result_count = 0
     listing: list = []
     try:
+        # 阶段1：只取列表（with_detail=False），拿到全部列表项后 total 才确定
         result = c.collect_by_keyword(
             keyword,
             max_pages=max_pages,
-            with_detail=with_detail,
+            with_detail=False,
             min_price=min_price,
             max_price=max_price,
         )
         listing = result.get("listing") or []
-        details = result.get("details") or []
 
-        # 列表落库
-        written = save_listing_items(listing, task_id)
-        update_progress(task_id, progress=len(listing),
-                        total=len(listing), result_count=written)
-
-        # 详情落库（二段式）
-        for det in details:
-            if save_product(det, task_id, lane=lane):
-                result_count += 1
-
-        update_progress(task_id, progress=len(listing),
-                        total=len(listing), result_count=result_count or written)
+        # 阶段2：列表落库 + 逐个采详情（带增量进度）
+        outcome, result_count = _process_listing(
+            c, lane, task_id, listing, with_detail, webhook_url, f"keyword={keyword!r}")
+        if outcome == "blocked":
+            return task_id
 
     except Exception as exc:
         logger.exception("run_keyword task_id=%d 异常", task_id)
@@ -762,7 +815,7 @@ def run_keyword(keyword: str, max_pages: int = 25,
 
     update_status(task_id, "done")
     logger.info("run_keyword done task_id=%d keyword=%r listing=%d saved=%d",
-                task_id, keyword, len(listing), result_count or written)
+                task_id, keyword, len(listing), result_count)
 
     # webhook 回调
     _maybe_fire_webhook(task_id, webhook_url)
@@ -806,21 +859,16 @@ def run_seller(seller_id: str, max_pages: int = 30,
     result_count = 0
     listing: list = []
     try:
+        # 阶段1：只取卖家全店列表（with_detail=False）
         result = c.collect_by_seller(seller_id, max_pages=max_pages,
-                                     with_detail=with_detail)
+                                     with_detail=False)
         listing = result.get("listing") or []
-        details = result.get("details") or []
 
-        written = save_listing_items(listing, task_id)
-        update_progress(task_id, progress=len(listing),
-                        total=len(listing), result_count=written)
-
-        for det in details:
-            if save_product(det, task_id, lane=lane):
-                result_count += 1
-
-        update_progress(task_id, progress=len(listing),
-                        total=len(listing), result_count=result_count or written)
+        # 阶段2：列表落库 + 逐个采详情（带增量进度）
+        outcome, result_count = _process_listing(
+            c, lane, task_id, listing, with_detail, webhook_url, f"seller={seller_id}")
+        if outcome == "blocked":
+            return task_id
 
     except Exception as exc:
         logger.exception("run_seller task_id=%d 异常", task_id)
@@ -834,7 +882,7 @@ def run_seller(seller_id: str, max_pages: int = 30,
 
     update_status(task_id, "done")
     logger.info("run_seller done task_id=%d seller_id=%s listing=%d saved=%d",
-                task_id, seller_id, len(listing), result_count or written)
+                task_id, seller_id, len(listing), result_count)
 
     # webhook 回调
     _maybe_fire_webhook(task_id, webhook_url)

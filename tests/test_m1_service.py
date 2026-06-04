@@ -474,6 +474,13 @@ class TestRunFlows(unittest.TestCase):
             "count_listing": len(listing_res["items"]),
             "details": detail_results,
         }
+
+        # 两步重构后：run_keyword 阶段2 逐个 collect_detail(pid, url)，桩按 pid 返回 ok 结果
+        def _fake_detail(pid, url=None, **kw):
+            r = self.parser.parse_product(LASKO_HTML)
+            r["product_id"] = pid
+            return r
+        mock.collect_detail.side_effect = _fake_detail
         return mock
 
     def _make_mock_collector_seller(self) -> MagicMock:
@@ -488,6 +495,13 @@ class TestRunFlows(unittest.TestCase):
             "count_listing": len(listing_res["items"]),
             "details": [],
         }
+
+        # 两步重构后：run_seller 阶段2 逐个 collect_detail(pid, url)
+        def _fake_detail(pid, url=None, **kw):
+            r = self.parser.parse_product(LASKO_HTML)
+            r["product_id"] = pid
+            return r
+        mock.collect_detail.side_effect = _fake_detail
         return mock
 
     # ── ids 流程 ────────────────────────────────────────────────────────────

@@ -105,7 +105,7 @@ class TestResume(unittest.TestCase):
         """run_ids 每采完一个 item 后都 mark_item_done。"""
         call_log = []
 
-        def fake_collect(pid, **kw):
+        def fake_collect(pid, url=None, **kw):
             call_log.append(pid)
             return _make_ok_result(pid)
 
@@ -127,7 +127,7 @@ class TestResume(unittest.TestCase):
 
         call_log = []
 
-        def fake_collect(pid, **kw):
+        def fake_collect(pid, url=None, **kw):
             call_log.append(pid)
             return _make_ok_result(pid)
 
@@ -190,7 +190,7 @@ class TestRetry(unittest.TestCase):
         """瞬时失败（empty_page）后重试，第二次成功。"""
         call_count = [0]
 
-        def fake_collect(pid, **kw):
+        def fake_collect(pid, url=None, **kw):
             call_count[0] += 1
             if call_count[0] < 2:
                 return _make_fail_result(pid)
@@ -208,7 +208,7 @@ class TestRetry(unittest.TestCase):
         """连续抛出异常，超过 RETRY_MAX 后返回 give_up。"""
         call_count = [0]
 
-        def fake_collect(pid, **kw):
+        def fake_collect(pid, url=None, **kw):
             call_count[0] += 1
             raise RuntimeError("临时网络超时")
 
@@ -224,7 +224,7 @@ class TestRetry(unittest.TestCase):
         """封控状态直接返回，不重试（只调用一次）。"""
         call_count = [0]
 
-        def fake_collect(pid, **kw):
+        def fake_collect(pid, url=None, **kw):
             call_count[0] += 1
             return _make_blocked_result(pid)
 
@@ -253,7 +253,7 @@ class TestRetry(unittest.TestCase):
         }
         call_counts = {"P1": 0, "P2": 0}
 
-        def fake_collect(pid, **kw):
+        def fake_collect(pid, url=None, **kw):
             idx = call_counts[pid]
             call_counts[pid] += 1
             r_list = results[pid]
@@ -712,7 +712,7 @@ class TestBE3Fixes(unittest.TestCase):
             "P2": {"_status": "give_up", "product_id": "P2"},
         }
         mock_c = MagicMock()
-        mock_c.collect_detail.side_effect = lambda pid, **kw: call_seq[pid]
+        mock_c.collect_detail.side_effect = lambda pid, url=None, **kw: call_seq[pid]
 
         task_id = self.runner.run_ids(["P1", "P2"], collector=mock_c)
         task = self.tasks.get_task(task_id)
@@ -728,7 +728,7 @@ class TestBE3Fixes(unittest.TestCase):
             "P2": {"_status": "give_up", "product_id": "P2"},
         }
         mock_c = MagicMock()
-        mock_c.collect_detail.side_effect = lambda pid, **kw: call_seq[pid]
+        mock_c.collect_detail.side_effect = lambda pid, url=None, **kw: call_seq[pid]
 
         task_id = self.runner.run_ids(["P1", "P2"], collector=mock_c)
         completed = self.tasks.get_completed_ids(task_id)
@@ -845,7 +845,7 @@ class TestM4NoRegression(unittest.TestCase):
     def test_run_ids_basic_still_works(self):
         """run_ids 基本流程：任务 done，products 入库。"""
         mock_c = MagicMock()
-        mock_c.collect_detail.side_effect = lambda pid, **kw: _make_ok_result(pid, price=1.0)
+        mock_c.collect_detail.side_effect = lambda pid, url=None, **kw: _make_ok_result(pid, price=1.0)
 
         task_id = self.runner.run_ids(["R1", "R2", "R3"], collector=mock_c)
 
