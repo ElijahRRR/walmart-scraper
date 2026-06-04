@@ -411,6 +411,72 @@ def list_listings(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 数据导出端点（CSV / Excel）
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/export/{kind}", tags=["results"])
+def export_data(
+    kind: str,
+    fmt: str = Query("csv", description="csv | xlsx"),
+    task_id: Optional[int] = Query(None, description="按任务过滤（可选）"),
+    _key: str = Depends(require_api_key),
+):
+    """导出 products / listings 为 CSV 或 Excel 文件下载。"""
+    if kind not in ("products", "listings"):
+        raise HTTPException(status_code=400, detail="kind 必须是 products | listings")
+    if fmt not in ("csv", "xlsx"):
+        raise HTTPException(status_code=400, detail="fmt 必须是 csv | xlsx")
+
+    with get_conn() as conn:
+        if task_id is not None:
+            rows = conn.execute(
+                f"SELECT * FROM {kind} WHERE task_id=? ORDER BY id ASC", (task_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute(f"SELECT * FROM {kind} ORDER BY id ASC").fetchall()
+
+    dict_rows = [dict(r) for r in rows]
+    columns = list(dict_rows[0].keys()) if dict_rows else []
+    suffix = f"_task{task_id}" if task_id is not None else "_all"
+    fname = f"{kind}{suffix}.{fmt}"
+
+    if fmt == "csv":
+        import csv
+        import io
+        buf = io.StringIO()
+        buf.write("﻿")  # BOM，让 Excel 正确识别 UTF-8 中文
+        writer = csv.DictWriter(buf, fieldnames=columns)
+        if columns:
+            writer.writeheader()
+            writer.writerows(dict_rows)
+        from fastapi.responses import Response
+        return Response(
+            content=buf.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+
+    # xlsx
+    import io
+    from openpyxl import Workbook
+    from fastapi.responses import Response
+    wb = Workbook()
+    ws = wb.active
+    ws.title = kind
+    if columns:
+        ws.append(columns)
+        for r in dict_rows:
+            ws.append([r.get(c) for c in columns])
+    bio = io.BytesIO()
+    wb.save(bio)
+    return Response(
+        content=bio.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 代理管理端点
 # ─────────────────────────────────────────────────────────────────────────────
 

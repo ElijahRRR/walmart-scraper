@@ -489,9 +489,21 @@ def _collect_with_retry(collector, product_id: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _make_collector():
-    """懒建 WalmartCollector（允许在测试中通过 monkeypatch 替换）。"""
+    """懒建 WalmartCollector。
+
+    绑定到 lane 池 lane 0 的 ProxyPool，使「采集实际用的IP」与
+    「/proxy/status 面板」「手动换IP按钮」三者共享同一个 IP（之前各用各的，
+    导致面板看不到采集在用的代理）。绑定失败时退回独立 collector。
+    （测试中通过 monkeypatch 替换本函数。）
+    """
     from app.engine.collector import WalmartCollector
-    return WalmartCollector()
+    try:
+        from app.service.lanes import get_lane_pool
+        pool = get_lane_pool()._lanes[0]._pool
+        return WalmartCollector(pool=pool)
+    except Exception:
+        logger.warning("绑定 lane 池失败，使用独立 collector", exc_info=True)
+        return WalmartCollector()
 
 
 def run_ids(ids: list[str], with_detail: bool = True,

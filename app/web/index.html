@@ -255,8 +255,10 @@
           <div class="rtab" data-rtab="listings">列表数据</div>
         </div>
         <button class="btn btn-sm btn-primary" id="btn-load-more" style="display:none">加载更多</button>
-        <button class="btn btn-sm" id="btn-close-result" style="display:none"
-                onclick="closeResult()" style="background:#eee">关闭</button>
+        <button class="btn btn-sm btn-primary" id="btn-export-csv" style="display:none;background:#2e7d32">导出 CSV</button>
+        <button class="btn btn-sm btn-primary" id="btn-export-xlsx" style="display:none;background:#1b7a3d">导出 Excel</button>
+        <button class="btn btn-sm" id="btn-close-result" style="display:none;background:#eee"
+                onclick="closeResult()">关闭</button>
       </div>
       <div class="table-wrap">
         <table id="result-table">
@@ -299,6 +301,14 @@
     <div class="card-body">
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
         <button class="btn btn-primary btn-sm" id="btn-refresh-proxy">刷新状态</button>
+        <label>自动刷新：
+          <select id="proxy-refresh-interval">
+            <option value="0">关闭</option>
+            <option value="3000">3 秒</option>
+            <option value="5000" selected>5 秒</option>
+            <option value="10000">10 秒</option>
+          </select>
+        </label>
         <div style="display:flex;align-items:center;gap:6px;">
           <label class="field-label" style="margin:0">Lane ID</label>
           <input type="number" id="rotate-lane-id" value="0" min="0" style="width:60px;padding:4px 6px;" />
@@ -336,7 +346,9 @@ function showMsg(id, text, type = 'info') {
 
 function fmtTime(ts) {
   if (!ts) return '—';
-  const d = new Date(ts * 1000);
+  // 后端 created_at 是 ISO 字符串("2026-06-03T12:45:42Z")；兼容数字时间戳
+  const d = (typeof ts === 'number') ? new Date(ts * 1000) : new Date(ts);
+  if (isNaN(d.getTime())) return '—';
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
@@ -522,6 +534,8 @@ async function viewResult(taskId) {
   document.getElementById('resultTitle').textContent = `任务 #${taskId} 的结果`;
   document.getElementById('resultTabs').style.display = 'flex';
   document.getElementById('btn-load-more').style.display = 'inline-block';
+  document.getElementById('btn-export-csv').style.display = 'inline-block';
+  document.getElementById('btn-export-xlsx').style.display = 'inline-block';
   document.getElementById('btn-close-result').style.display = 'inline-block';
 
   // 高亮 rtab
@@ -568,6 +582,22 @@ async function fetchResultPage(reset) {
 
 document.getElementById('btn-load-more').addEventListener('click', () => fetchResultPage(false));
 
+// 导出当前任务的当前类型（products/listings）为 CSV/Excel
+async function exportResult(fmt) {
+  if (_currentTaskId == null) return;
+  const url = `/export/${_currentRtab}?fmt=${fmt}&task_id=${_currentTaskId}`;
+  const resp = await fetch(url, { headers: { 'X-API-Key': apiKey() } });
+  if (!resp.ok) { alert('导出失败：' + resp.status); return; }
+  const blob = await resp.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${_currentRtab}_task${_currentTaskId}.${fmt}`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(a.href);
+}
+document.getElementById('btn-export-csv').addEventListener('click', () => exportResult('csv'));
+document.getElementById('btn-export-xlsx').addEventListener('click', () => exportResult('xlsx'));
+
 document.querySelectorAll('.rtab').forEach(tab => {
   tab.addEventListener('click', async () => {
     _currentRtab = tab.dataset.rtab;
@@ -583,6 +613,8 @@ function closeResult() {
   document.getElementById('resultTitle').textContent = '请从上方任务列表点击「查看结果」';
   document.getElementById('resultTabs').style.display = 'none';
   document.getElementById('btn-load-more').style.display = 'none';
+  document.getElementById('btn-export-csv').style.display = 'none';
+  document.getElementById('btn-export-xlsx').style.display = 'none';
   document.getElementById('btn-close-result').style.display = 'none';
   document.getElementById('result-thead').innerHTML = '<tr><td style="color:#aaa">暂无数据</td></tr>';
   document.getElementById('result-tbody').innerHTML = '';
@@ -684,6 +716,16 @@ loadMetrics();
 // ── 代理/IP 状态 ──────────────────────────────────────────────────────────────
 
 document.getElementById('btn-refresh-proxy').addEventListener('click', loadProxyStatus);
+
+// 代理状态自动刷新（默认 5s）
+let _proxyTimer = null;
+document.getElementById('proxy-refresh-interval').addEventListener('change', function() {
+  clearInterval(_proxyTimer);
+  const ms = parseInt(this.value);
+  if (ms > 0) { _proxyTimer = setInterval(loadProxyStatus, ms); loadProxyStatus(); }
+});
+_proxyTimer = setInterval(loadProxyStatus, 5000);
+loadProxyStatus();
 
 document.getElementById('btn-rotate-ip').addEventListener('click', async () => {
   const lane_id = parseInt(document.getElementById('rotate-lane-id').value) || 0;
