@@ -25,6 +25,7 @@ from typing import Any, Optional
 from fastapi import (
     BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile,
 )
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -59,6 +60,19 @@ app = FastAPI(
     description="沃尔玛商品数据采集 REST API",
     version="0.3.0",
     lifespan=lifespan,
+)
+
+# CORS 中间件：允许 Nuxt 前端 (localhost:3000) 及本地开发访问
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # 挂载静态文件（app/web/ 目录，路径 /static）
