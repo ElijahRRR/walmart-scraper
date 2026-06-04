@@ -31,24 +31,42 @@ def _resolve_db_path() -> Path:
 def backup_db(keep: int = 10) -> Path | None:
     """把当前 DB 备份到 data/backups/walmart_YYYYMMDD_HHMMSS.db，保留最近 keep 份。
 
-    仅在 DB 存在且非空（>8KB，即已有数据/表）时备份。返回备份路径或 None。
+    用 sqlite 在线备份 API（**正确处理 WAL** —— 数据可能在 .db-wal 里，
+    直接 copy 主文件会丢数据）。仅在库里有实际数据（tasks/products/listings 非空）
+    时才备份，避免空库刷一堆无用备份。返回备份路径或 None。
     防呆：万一 DB 被误删/重置，可从备份恢复。
     """
-    import shutil
     from datetime import datetime
 
     src = _resolve_db_path()
-    if not src.exists() or src.stat().st_size < 8192:
+    if not src.exists():
         return None
-    backup_dir = src.parent / "backups"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dst = backup_dir / f"walmart_{ts}.db"
     try:
-        shutil.copy2(src, dst)
-    except OSError as exc:
+        src_conn = sqlite3.connect(str(src))
+        # 有无实际数据
+        total = 0
+        for t in ("tasks", "products", "listings"):
+            try:
+                total += src_conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            except sqlite3.Error:
+                pass
+        if total == 0:
+            src_conn.close()
+            return None
+
+        backup_dir = src.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dst = backup_dir / f"walmart_{ts}.db"
+        dst_conn = sqlite3.connect(str(dst))
+        with dst_conn:
+            src_conn.backup(dst_conn)   # 在线备份，含 WAL 中的数据
+        dst_conn.close()
+        src_conn.close()
+    except sqlite3.Error as exc:
         logger.warning("DB 备份失败（不影响启动）: %s", exc)
         return None
+
     # 清理旧备份，只留最近 keep 份
     backups = sorted(backup_dir.glob("walmart_*.db"))
     for old in backups[:-keep]:
@@ -56,7 +74,7 @@ def backup_db(keep: int = 10) -> Path | None:
             old.unlink()
         except OSError:
             pass
-    logger.info("DB 已备份：%s（保留最近 %d 份）", dst.name, keep)
+    logger.info("DB 已备份：%s（%d 条记录，保留最近 %d 份）", dst.name, total, keep)
     return dst
 
 
