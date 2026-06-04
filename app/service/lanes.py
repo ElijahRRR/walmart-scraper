@@ -9,7 +9,11 @@
 使用方式：
     from app.service.lanes import LanePool, get_lane_pool
     pool = get_lane_pool()          # 单例，全局复用
-    task_id = pool.submit_ids(ids)  # 提交到空闲 lane
+    lane = pool.get_idle_lane()     # 获取空闲 lane（供 runner/BE3 使用）
+
+注意（P2-6）：当前 runner (_make_collector) 仅消费 lane 0 的 ProxyPool，
+LANES>1 时其余 lane 的 IP 被初始化但不被采集流程消费。
+get_idle_lane() / LanePool.lanes 接口已就绪，供 BE3 或未来多 lane 分发接入。
 """
 import logging
 import threading
@@ -85,15 +89,22 @@ class Lane:
     def __init__(self, lane_id: int, api_key: str,
                  pace_min: float = 3.0, pace_max: float = 7.0,
                  ip_max_age_min: int = 690) -> None:
-        from app.engine.proxy import ProxyPool
+        from app.engine.proxy import ProxyPool, _PROJECT_ROOT
         self.lane_id = lane_id
-        # 每 lane 独立 ProxyPool（独立IP，独立状态文件由内存持有）
+        # P2-7：每 lane 使用独立 state 文件，避免多 lane 共享同一 proxy_state.json 互相污染。
+        # lane 0 使用默认文件名 proxy_state.json（与旧行为兼容），lane N>0 使用 proxy_state_{N}.json。
+        if lane_id == 0:
+            state_file = str(_PROJECT_ROOT / "proxy_state.json")
+        else:
+            state_file = str(_PROJECT_ROOT / f"proxy_state_{lane_id}.json")
+        # 每 lane 独立 ProxyPool（独立IP，独立状态文件）
         self._pool = ProxyPool(
             api_key=api_key,
             pace_min=pace_min,
             pace_max=pace_max,
             ip_max_age_min=ip_max_age_min,
             auto_rotate=False,   # lane 层面关自动换IP
+            state_file=state_file,  # P2-7：lane 独立状态文件
         )
         self._state = LaneState.IDLE
         self._lock = threading.Lock()
@@ -370,6 +381,15 @@ def get_lane_pool() -> LanePool:
             pace_max=config.PACE_MAX,
             ip_max_age_min=config.IP_MAX_AGE_MIN,
         )
+        # P2-6：runner._make_collector 目前硬绑 lane 0，其余 lane 的 IP 虽初始化但不被采集消费。
+        # get_idle_lane() 接口已就绪，待 BE3 完成多 lane 任务分发后移除此告警。
+        if config.LANES > 1:
+            logger.warning(
+                "[LanePool] LANES=%d，但当前采集 runner 仅消费 lane 0 的 ProxyPool，"
+                "lane 1~%d 的 IP 已初始化但不参与采集。"
+                "如需多 lane 并发，请等待 BE3 完成多 lane 任务分发接入。",
+                config.LANES, config.LANES - 1,
+            )
         return _global_pool
 
 
