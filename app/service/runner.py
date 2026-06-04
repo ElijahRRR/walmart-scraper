@@ -599,6 +599,9 @@ def run_ids(ids: list[str], with_detail: bool = True,
     else:
         c, lane = _make_collector()
 
+    if lane is not None:
+        lane.mark_busy()  # 采集中 → RUNNING（修复"采集时显示空闲"）
+
     # P2-3：result_count 只计已真正入库的项（续采初始计数也应如此）
     # 续采时 completed 为已 mark_item_done 的项，但其中可能包含 give_up 项，
     # 精确计数需从 DB 读 products 表，这里保守取 0（续采计数从当前轮次重算），
@@ -646,6 +649,10 @@ def run_ids(ids: list[str], with_detail: bool = True,
         # P2-5：异常退出也触发 webhook
         _maybe_fire_webhook(task_id, webhook_url)
         return task_id
+    finally:
+        # 采集结束 → RUNNING 复位为 IDLE（BLOCKED 态不动，保留供人工换IP）
+        if lane is not None:
+            lane.mark_idle()
 
     # 软封检测：若整轮有 2+ 个 give_up/失败且入库 0，视为疑似软封
     # "连续多个 give_up" 阈值设为 2，单项失败不误判
@@ -656,6 +663,8 @@ def run_ids(ids: list[str], with_detail: bool = True,
             "建议手动换IP后重试。",
             task_id, give_up_count,
         )
+        if lane is not None:
+            lane.notify_blocked(f"疑似软封：{give_up_count} 项全部失败，入库 0")
         update_status(task_id, "blocked",
                       error_msg=f"疑似软封：{give_up_count} 项全部失败，入库 0")
         _maybe_fire_webhook(task_id, webhook_url)
@@ -712,6 +721,9 @@ def run_keyword(keyword: str, max_pages: int = 25,
     else:
         c, lane = _make_collector()
 
+    if lane is not None:
+        lane.mark_busy()
+
     result_count = 0
     listing: list = []
     try:
@@ -744,6 +756,9 @@ def run_keyword(keyword: str, max_pages: int = 25,
         # P2-5：异常退出触发 webhook
         _maybe_fire_webhook(task_id, webhook_url)
         return task_id
+    finally:
+        if lane is not None:
+            lane.mark_idle()
 
     update_status(task_id, "done")
     logger.info("run_keyword done task_id=%d keyword=%r listing=%d saved=%d",
@@ -785,6 +800,9 @@ def run_seller(seller_id: str, max_pages: int = 30,
     else:
         c, lane = _make_collector()
 
+    if lane is not None:
+        lane.mark_busy()
+
     result_count = 0
     listing: list = []
     try:
@@ -810,6 +828,9 @@ def run_seller(seller_id: str, max_pages: int = 30,
         # P2-5：异常退出触发 webhook
         _maybe_fire_webhook(task_id, webhook_url)
         return task_id
+    finally:
+        if lane is not None:
+            lane.mark_idle()
 
     update_status(task_id, "done")
     logger.info("run_seller done task_id=%d seller_id=%s listing=%d saved=%d",

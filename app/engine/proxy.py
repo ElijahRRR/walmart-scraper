@@ -60,7 +60,11 @@ class ProxyPool:
                  pace_max: float = MAX_DELAY,
                  ip_max_age_min: int = 690,
                  auto_rotate: bool = False,
-                 state_file: str | None = None) -> None:
+                 state_file: str | None = None,
+                 on_extract=None) -> None:
+        # on_extract: 可选回调，每次提取新IP时以 "ip:port" 调用一次。
+        # Lane 用它在采集途中提IP也记 proxy_log/total_ip_used（不止手动换IP）。
+        self._on_extract = on_extract
         self._proxy: str | None = None
         self._born_at: float = 0.0
         self._uses: int = 0
@@ -110,6 +114,12 @@ class ProxyPool:
         ip, port, user, pwd = line.split(":")
         self._extractions += 1
         logger.info("提取新 IP（本次运行第 %d 个）: %s:%s", self._extractions, ip, port)
+        # 通知回调（记 proxy_log/total_ip_used）；回调异常不影响采集
+        if self._on_extract:
+            try:
+                self._on_extract(f"{ip}:{port}")
+            except Exception:
+                logger.warning("on_extract 回调异常（忽略）", exc_info=True)
         return f"http://{user}:{pwd}@{ip}:{port}"
 
     def current(self) -> str:

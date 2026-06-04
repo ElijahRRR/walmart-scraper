@@ -463,6 +463,9 @@ class TestProxyLogDB(unittest.TestCase):
             lane._pool._proxy = f"http://u:p@{new_ip}"
             lane._pool._born_at = time.time()
             lane._pool._uses = 0
+            # 真实 rotate→_extract 会触发 on_extract 回调记 extract 日志，此处显式模拟
+            if lane._pool._on_extract:
+                lane._pool._on_extract(new_ip)
             return lane._pool._proxy
 
         lane._pool.rotate = fake_rotate

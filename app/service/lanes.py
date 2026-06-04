@@ -98,6 +98,7 @@ class Lane:
         else:
             state_file = str(_PROJECT_ROOT / f"proxy_state_{lane_id}.json")
         # 每 lane 独立 ProxyPool（独立IP，独立状态文件）
+        # on_extract：采集途中 pool 自动提IP时也记 proxy_log+total_ip_used（修复"累计IP=0"）
         self._pool = ProxyPool(
             api_key=api_key,
             pace_min=pace_min,
@@ -105,6 +106,8 @@ class Lane:
             ip_max_age_min=ip_max_age_min,
             auto_rotate=False,   # lane 层面关自动换IP
             state_file=state_file,  # P2-7：lane 独立状态文件
+            on_extract=lambda ip: _log_proxy_event(
+                ip, "extract", detail=f"lane {lane_id} 提取IP"),
         )
         self._state = LaneState.IDLE
         self._lock = threading.Lock()
@@ -161,6 +164,18 @@ class Lane:
             self._total_products += 1
             self._ip_product_count += 1
 
+    def mark_busy(self) -> None:
+        """采集开始：置 RUNNING（封控/停止态不覆盖）。修复"采集中却显示空闲"。"""
+        with self._lock:
+            if self._state in (LaneState.IDLE,):
+                self._state = LaneState.RUNNING
+
+    def mark_idle(self) -> None:
+        """采集结束：RUNNING→IDLE（不动 BLOCKED/STOPPED，保留封控态供人工换IP）。"""
+        with self._lock:
+            if self._state == LaneState.RUNNING:
+                self._state = LaneState.IDLE
+
     # ── 恢复 lane（人工换IP后调用） ─────────────────────────────────────────
 
     def resume(self) -> str:
@@ -186,9 +201,8 @@ class Lane:
             new_ps = self._pool.get_status()
             new_ip_display = new_ps.get("proxy") or new_proxy.split("@")[-1]
 
-            # 记录新IP提取事件
-            _log_proxy_event(new_ip_display, "extract", count=0,
-                             detail=f"lane {self.lane_id} 手动恢复")
+            # 注：新IP的 extract 事件已由 ProxyPool.on_extract 回调记录，此处不再重复记，
+            # 避免 total_ip_used 重复计数。
 
             # 重置状态
             self._ip_product_count = 0

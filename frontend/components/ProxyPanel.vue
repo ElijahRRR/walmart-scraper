@@ -95,11 +95,11 @@
               <div class="text-gray-400 text-[10px]">IP 寿命</div>
               <div class="font-medium text-gray-700">{{ fmtAge(lane.ip_age_sec) }}</div>
             </div>
-            <div class="bg-gray-50 rounded px-2 py-1">
-              <div class="text-gray-400 text-[10px]">使用次数</div>
+            <div class="bg-gray-50 rounded px-2 py-1" title="该IP累计发出的请求数，含重试/列表页/失败，故通常大于产出商品数">
+              <div class="text-gray-400 text-[10px]">请求次数</div>
               <div class="font-medium text-gray-700">{{ lane.ip_uses ?? 0 }}</div>
             </div>
-            <div class="bg-gray-50 rounded px-2 py-1">
+            <div class="bg-gray-50 rounded px-2 py-1" title="成功入库的商品数">
               <div class="text-gray-400 text-[10px]">产出商品</div>
               <div class="font-medium text-gray-700">{{ lane.total_products ?? 0 }}</div>
             </div>
