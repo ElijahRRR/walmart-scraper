@@ -203,9 +203,50 @@ curl http://localhost:8900/metrics \
 
 ---
 
-## Web UI 用法
+## 前端（Nuxt）
 
-访问 `http://localhost:8900/` 可使用极简 Web UI：
+Nuxt 3 + TypeScript + Tailwind CSS 现代前端，运行在 `:3000`，通过 `/api` 代理到后端 `:8900`。
+
+> 说明：`app/web/index.html` 是后端自带的极简回退页（直接访问 `:8900/` 仍可用），Nuxt 前端是推荐的主界面。
+
+### 安装依赖
+
+```bash
+cd frontend
+npm install
+```
+
+### 开发模式（热重载，`:3000`）
+
+```bash
+npm run dev
+# 访问 http://localhost:3000
+# 前端 /api/** 通过 Nitro routeRules 代理到 http://localhost:8900/**
+```
+
+### 生产构建
+
+```bash
+npm run build
+# 产物位于 frontend/.output/
+# 预览：node .output/server/index.mjs
+```
+
+### 功能面板
+
+| 面板 | 说明 |
+|------|------|
+| 任务提交 | 三标签（按 ID / 关键词 / 卖家），支持从 txt/csv/xlsx 导入 |
+| 任务列表 | 轮询 `/tasks`，状态徽章+进度条，点「查看结果」打开结果浮层 |
+| 结果查看 | products / listings 两标签，keyset 分页，导出 CSV / Excel |
+| 指标面板 | 6 个数字卡片（请求/成功率/429/封控/入库商品/IP 产出），自动刷新 |
+| 代理面板 | Lane 状态卡片（封控高亮），一键切换 IP |
+
+---
+
+## Web UI 用法（旧版回退）
+
+访问 `http://localhost:8900/` 可使用极简 Web UI（内置于后端，无需 npm）：
 
 1. **提交采集**：切换 IDs / 关键词 / 卖家 三个标签，填写参数后提交
 2. **任务列表**：查看所有任务的状态/进度/结果数，可设置自动刷新间隔
