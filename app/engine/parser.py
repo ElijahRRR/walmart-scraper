@@ -288,7 +288,11 @@ class WalmartParser:
             if isinstance(s, dict)
         ]
         # 重量：从规格里抽出来做独立字段（沃尔玛只有产品自重，无单独运输重量）
-        r["weight"] = self._extract_weight(specs)
+        weight_raw = self._extract_weight(specs)
+        r["weight"] = weight_raw                       # 原始字符串，如 '9.25 lb'
+        val, unit = _split_weight(weight_raw)
+        r["weight_value"] = val                        # 数值，如 9.25
+        r["weight_unit"] = unit                        # 单位，如 'lb'
 
     @staticmethod
     def _extract_weight(specs: list) -> Optional[str]:
@@ -375,6 +379,27 @@ def _to_float(val: Any) -> Optional[float]:
         return float(digits) if digits else None
     except ValueError:
         return None
+
+
+_WEIGHT_UNIT_NORMALIZE = {
+    "lbs": "lb", "pound": "lb", "pounds": "lb",
+    "ounce": "oz", "ounces": "oz",
+    "kilogram": "kg", "kilograms": "kg", "kgs": "kg",
+    "gram": "g", "grams": "g",
+}
+
+
+def _split_weight(weight_str: Optional[str]):
+    """'9.25 lb' → (9.25, 'lb')；解析失败返回 (None, None)。单位做轻量归一(lbs→lb)。"""
+    if not weight_str:
+        return None, None
+    m = re.search(r"([\d,]+\.?\d*)\s*([a-zA-Z]+)?", str(weight_str))
+    if not m:
+        return None, None
+    value = _to_float(m.group(1))
+    unit = (m.group(2) or "").strip().lower()
+    unit = _WEIGHT_UNIT_NORMALIZE.get(unit, unit) or None
+    return value, unit
 
 
 def _clean_str(val: Any) -> Optional[str]:

@@ -79,7 +79,9 @@ CREATE TABLE IF NOT EXISTS products (
     other_sellers       TEXT,                    -- JSON：SSR 内联的其他卖家报价
     -- ── 库存状态（P2-15：从 ship_info.availability_status 派生） ────────────
     in_stock            INTEGER,                 -- 1=有货 / 0=缺货 / NULL=未知
-    weight              TEXT,                    -- 产品重量(含单位, 如 '9.25 lb')，从规格抽取
+    weight              TEXT,                    -- 产品重量原始串(含单位, 如 '9.25 lb')
+    weight_value        REAL,                    -- 重量数值(如 9.25)
+    weight_unit         TEXT,                    -- 重量单位(如 'lb')
     -- ── 变动检测：上次快照数值（用于与本次比对） ─────────────────────────────
     prev_price          REAL,                    -- 上次落库的价格（NULL=首次入库）
     prev_in_stock       INTEGER,                 -- 上次在库状态（0/1/NULL）
@@ -212,8 +214,10 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     "products": {
         # P2-15 库存状态：从 ship_info.availability_status 派生（旧库补列）
         "in_stock":          "INTEGER",
-        # 产品重量（含单位字符串，从规格抽取）
+        # 产品重量（原始串 + 数值 + 单位）
         "weight":            "TEXT",
+        "weight_value":      "REAL",
+        "weight_unit":       "TEXT",
         # M4 变动检测：前次快照数值
         "prev_price":        "REAL",
         "prev_in_stock":     "INTEGER",
