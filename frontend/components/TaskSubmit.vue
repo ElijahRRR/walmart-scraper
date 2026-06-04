@@ -43,7 +43,7 @@ const idsImportLoading = ref(false)
 
 // ---- keyword 标签 ----
 const kwKeyword = ref('')
-const kwMaxPages = ref<number>(5)
+const kwMaxPages = ref<number>(25)   // 默认翻满（沃尔玛搜索硬上限25页）
 const kwMinPrice = ref<number | null>(null)
 const kwMaxPrice = ref<number | null>(null)
 const kwWithDetail = ref(true)
@@ -53,7 +53,7 @@ const kwImportLoading = ref(false)
 
 // ---- seller 标签 ----
 const selSellerId = ref('')
-const selMaxPages = ref<number>(5)
+const selMaxPages = ref<number>(30)   // 默认覆盖大店铺（卖家全店无25页硬限）
 const selWithDetail = ref(true)
 const selLoading = ref(false)
 const selFileRef = ref<HTMLInputElement | null>(null)
@@ -418,7 +418,7 @@ const isImporting = computed(() => {
               type="number"
               min="1"
               max="25"
-              placeholder="5"
+              placeholder="25"
             />
           </div>
           <div class="field">
