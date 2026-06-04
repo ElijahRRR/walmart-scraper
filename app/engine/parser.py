@@ -212,12 +212,19 @@ class WalmartParser:
         if ship_price is None and so:
             ship_price = 0.0
         r["ship_price"] = ship_price
+        availability_status = so.get("availabilityStatus") if so else None
         r["ship_info"] = {
             "delivery_date": so.get("deliveryDate"),        # 到货窗口起 (ISO)
             "max_delivery_date": so.get("maxDeliveryDate"),  # 到货窗口止 (ISO)
             "ship_method": so.get("shipMethod"),             # STANDARD / ...
-            "availability_status": so.get("availabilityStatus"),
+            "availability_status": availability_status,
         } if so else None
+        # P2-15：从 availabilityStatus 派生 in_stock（整数 0/1/None）
+        # IN_STOCK → 1；OUT_OF_STOCK / UNAVAILABLE → 0；缺字段 → None
+        if availability_status is not None:
+            r["in_stock"] = 1 if availability_status == "IN_STOCK" else 0
+        else:
+            r["in_stock"] = None
         # 限购数量（fulfillmentOptions 里）
         fo = p.get("fulfillmentOptions") or []
         if fo and isinstance(fo, list):
@@ -410,14 +417,22 @@ def _init_data(html_text: str) -> Optional[dict]:
 
 
 def _collect_listing_items(init: dict) -> List[dict]:
+    """收集列表页所有商品条目，按 usItemId 去重（赞助/自然位重叠时保留首次出现）。"""
+    seen: set = set()
     items: List[dict] = []
     sr = init.get("searchResult") or {}
     for st in (sr.get("itemStacks") or []):
-        items += [x for x in (st.get("items") or []) if isinstance(x, dict) and x.get("usItemId")]
+        for x in (st.get("items") or []):
+            if isinstance(x, dict) and x.get("usItemId") and x["usItemId"] not in seen:
+                seen.add(x["usItemId"])
+                items.append(x)
     for mod in ((init.get("contentLayout") or {}).get("modules") or []):
         outer = (mod.get("configs") or {}).get("itemStacks") or {}
         for st in (outer.get("itemStacks") or []):
-            items += [x for x in (st.get("items") or []) if isinstance(x, dict) and x.get("usItemId")]
+            for x in (st.get("items") or []):
+                if isinstance(x, dict) and x.get("usItemId") and x["usItemId"] not in seen:
+                    seen.add(x["usItemId"])
+                    items.append(x)
     return items
 
 

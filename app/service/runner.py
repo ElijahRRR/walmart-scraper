@@ -26,28 +26,26 @@ from app.service.tasks import (
     create_task, update_progress, update_status,
     mark_item_done, get_completed_ids,
 )
+# P2-2：从 config 读取 RETRY_MAX，使环境变量生效（删除模块级硬编码常量）
+from app.config import RETRY_MAX  # noqa: F401（下游测试通过 runner.RETRY_MAX 引用）
 
 logger = logging.getLogger(__name__)
 
-# ── 常量 ─────────────────────────────────────────────────────────────────────
-
-# 瞬时失败最多重试次数（不含首次尝试）
-RETRY_MAX: int = 2
-
 # 封控状态标识（这些 _status 代表封控，不应重试）
-BLOCKED_STATUSES: frozenset[str] = frozenset({
-    "blocked", "waiting_room", "captcha",
-})
+BLOCKED_STATUSES: frozenset[str] = frozenset({"blocked", "waiting_room", "captcha"})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 变动检测辅助
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _detect_changes(product_id: str, new_price: Optional[float],
+def _detect_changes(conn, product_id: str, new_price: Optional[float],
                     new_in_stock: Optional[int],
                     new_seller_count: Optional[int]) -> dict:
-    """与 products 表现有记录对比，返回变动详情。
+    """在给定连接（事务内）与 products 表现有记录对比，返回变动详情。
+
+    P2-4：接受已有的连接参数，在调用方的 BEGIN IMMEDIATE 事务内执行，
+    保证 detect + upsert + 写 product_changes 三步原子化。
 
     Returns:
         {
@@ -56,6 +54,7 @@ def _detect_changes(product_id: str, new_price: Optional[float],
           "old_price": float | None,
           "old_in_stock": int | None,
           "old_seller_count": int | None,
+          "is_new": bool,  -- True=首次入库
         }
     """
     result = {
@@ -64,24 +63,24 @@ def _detect_changes(product_id: str, new_price: Optional[float],
         "old_price": None,
         "old_in_stock": None,
         "old_seller_count": None,
+        "is_new": True,
     }
 
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT price, seller_count, parse_status FROM products WHERE product_id=?",
-            (product_id,),
-        ).fetchone()
+    # P2-15：读取 in_stock 字段（新增列，旧库通过迁移补齐）
+    row = conn.execute(
+        "SELECT price, in_stock, seller_count FROM products WHERE product_id=?",
+        (product_id,),
+    ).fetchone()
 
     if row is None:
         # 首次入库，不算变动
         return result
 
+    result["is_new"] = False
     old_price = row["price"]
+    # P2-15：直接读取 in_stock 列（非 None 占位）
+    old_in_stock = row["in_stock"]
     old_seller_count = row["seller_count"]
-    # 用 parse_status 表示在库状态（ok/partial=在库；否则=缺货/未知）
-    # 注意：products 表没有 in_stock 字段，用 parse_status 近似
-    # 新记录的 in_stock 用 new_in_stock 传入（True=1/False=0/None=未知）
-    old_in_stock = None  # products 表无独立 in_stock 字段，此处保留 None 占位
 
     result["old_price"] = old_price
     result["old_in_stock"] = old_in_stock
@@ -99,7 +98,7 @@ def _detect_changes(product_id: str, new_price: Optional[float],
             and old_seller_count != new_seller_count):
         changed.append("seller_count")
 
-    # in_stock 变动（如果调用方传了 new_in_stock）
+    # P2-15：in_stock 变动（真实值，非 None 占位）
     if old_in_stock is not None and new_in_stock is not None and old_in_stock != new_in_stock:
         changed.append("in_stock")
 
@@ -110,50 +109,57 @@ def _detect_changes(product_id: str, new_price: Optional[float],
     return result
 
 
-def _write_change_record(product_id: str, task_id: Optional[int],
+def _write_change_record(conn, product_id: str, task_id: Optional[int],
                          change_info: dict,
                          new_price: Optional[float],
                          new_in_stock: Optional[int],
                          new_seller_count: Optional[int]) -> None:
-    """向 product_changes 表写入一条变动记录。"""
-    try:
-        with get_conn() as conn:
-            conn.execute(
-                """
-                INSERT INTO product_changes(
-                    product_id, task_id,
-                    old_price, new_price,
-                    old_in_stock, new_in_stock,
-                    old_seller_count, new_seller_count,
-                    changed_fields
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    product_id, task_id,
-                    change_info["old_price"], new_price,
-                    change_info["old_in_stock"], new_in_stock,
-                    change_info["old_seller_count"], new_seller_count,
-                    json.dumps(change_info["changed_fields"], ensure_ascii=False),
-                ),
-            )
-    except Exception as exc:
-        logger.warning("_write_change_record 写入失败（不影响主流程）: %s", exc)
+    """在给定连接（事务内）向 product_changes 表写入一条变动记录。
+
+    P2-4：复用调用方的连接，与 detect + upsert 在同一事务内。
+    """
+    conn.execute(
+        """
+        INSERT INTO product_changes(
+            product_id, task_id,
+            old_price, new_price,
+            old_in_stock, new_in_stock,
+            old_seller_count, new_seller_count,
+            changed_fields
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            product_id, task_id,
+            change_info["old_price"], new_price,
+            change_info["old_in_stock"], new_in_stock,
+            change_info["old_seller_count"], new_seller_count,
+            json.dumps(change_info["changed_fields"], ensure_ascii=False),
+        ),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 落库：详情（products 表 upsert + 变动检测）
 # ─────────────────────────────────────────────────────────────────────────────
 
-def save_product(result: dict, task_id: Optional[int] = None) -> bool:
+def save_product(result: dict, task_id: Optional[int] = None,
+                 lane=None) -> bool:
     """把 parse_product 的输出写入 products 表（按 product_id upsert）。
 
     M4 新增：
-      - upsert 时与旧值对比 price/seller_count，有变动则写 product_changes 表，
+      - upsert 时与旧值对比 price/seller_count/in_stock，有变动则写 product_changes 表，
         并更新 products 的 prev_* 字段和 has_change 标志。
+
+    P1-2：可选字段（upc/gtin13/title/brand/image_url/long_description/images/category 等）
+          改用 COALESCE(excluded.x, products.x)，仅新值非 NULL 才覆盖，防止 partial
+          状态解析结果把已有有效数据抹成 NULL。
+    P2-4：detect + upsert + 写 product_changes 合入单连接 BEGIN IMMEDIATE 事务，原子化。
+    P2-15：in_stock 从 result["in_stock"]（parser 从 availability_status 派生）读取。
+    P2-1：若传入 lane，成功写入后调 lane.notify_product_saved()。
 
     _status 非 "ok" 的结果不写主数据（但计入日志）：
       - blocked / empty_page / no_next_data → 采集失败，不污染库
-      - partial → 允许写入（字段不全但有效数据）
+      - partial → 允许写入（字段不全但有效数据，COALESCE 保护已有有效字段）
 
     Returns:
         True  = 成功写入
@@ -184,13 +190,24 @@ def save_product(result: dict, task_id: Optional[int] = None) -> bool:
 
     new_price = result.get("price")
     new_seller_count = result.get("seller_count")
-    new_in_stock: Optional[int] = None  # products 表无独立字段，暂定 None
+    # P2-15：从 parser 派生的 in_stock（1/0/None）
+    new_in_stock: Optional[int] = result.get("in_stock")
 
-    # ── 变动检测（在写入前对比旧值） ───────────────────────────────────────
-    change_info = _detect_changes(product_id, new_price, new_in_stock, new_seller_count)
-    has_change = int(change_info["has_change"])
+    # P2-4：detect + upsert + 写 product_changes 合入单连接 BEGIN IMMEDIATE 事务，原子化。
+    import sqlite3 as _sqlite3
+    from app.db import _resolve_db_path
+    db_path = str(_resolve_db_path())
+    conn = _sqlite3.connect(db_path, check_same_thread=False)
+    conn.row_factory = _sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
 
-    with get_conn() as conn:
+        # ── 变动检测（在写入前对比旧值，事务内） ─────────────────────────────
+        change_info = _detect_changes(conn, product_id, new_price, new_in_stock, new_seller_count)
+        has_change = int(change_info["has_change"])
+
         conn.execute(
             """
             INSERT INTO products(
@@ -206,6 +223,7 @@ def save_product(result: dict, task_id: Optional[int] = None) -> bool:
                 seller_name, seller_id, seller_type, catalog_seller_id,
                 seller_rating, seller_review_count,
                 seller_count, other_seller_count, other_sellers,
+                in_stock,
                 parse_status,
                 prev_price, prev_in_stock, prev_seller_count, has_change
             ) VALUES (
@@ -222,14 +240,12 @@ def save_product(result: dict, task_id: Optional[int] = None) -> bool:
                 ?, ?,
                 ?, ?, ?,
                 ?,
+                ?,
                 ?, ?, ?, ?
             )
             ON CONFLICT(product_id) DO UPDATE SET
                 task_id             = excluded.task_id,
-                brand               = excluded.brand,
-                title               = excluded.title,
-                category            = excluded.category,
-                url                 = excluded.url,
+                -- P1-2：价格/状态类字段无条件覆写（这些字段需要每次更新）
                 price               = excluded.price,
                 price_string        = excluded.price_string,
                 was_price           = excluded.was_price,
@@ -242,28 +258,34 @@ def save_product(result: dict, task_id: Optional[int] = None) -> bool:
                 seller_fulfilled    = excluded.seller_fulfilled,
                 rating              = excluded.rating,
                 reviews             = excluded.reviews,
-                upc                 = excluded.upc,
-                gtin13              = excluded.gtin13,
-                image_url           = excluded.image_url,
-                images              = excluded.images,
-                long_description    = excluded.long_description,
-                long_description_text = excluded.long_description_text,
-                product_details     = excluded.product_details,
-                seller_name         = excluded.seller_name,
-                seller_id           = excluded.seller_id,
-                seller_type         = excluded.seller_type,
-                catalog_seller_id   = excluded.catalog_seller_id,
-                seller_rating       = excluded.seller_rating,
-                seller_review_count = excluded.seller_review_count,
                 seller_count        = excluded.seller_count,
                 other_seller_count  = excluded.other_seller_count,
-                other_sellers       = excluded.other_sellers,
+                in_stock            = COALESCE(excluded.in_stock, products.in_stock),
                 parse_status        = excluded.parse_status,
                 prev_price          = products.price,
-                prev_in_stock       = products.prev_in_stock,
+                prev_in_stock       = products.in_stock,
                 prev_seller_count   = products.seller_count,
                 has_change          = excluded.has_change,
-                snapshot_at         = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                snapshot_at         = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                -- P1-2：可选标识/描述类字段用 COALESCE：仅新值非 NULL 才覆盖，防止 partial 抹掉已有有效数据
+                brand               = COALESCE(excluded.brand, products.brand),
+                title               = COALESCE(excluded.title, products.title),
+                category            = COALESCE(excluded.category, products.category),
+                url                 = COALESCE(excluded.url, products.url),
+                upc                 = COALESCE(excluded.upc, products.upc),
+                gtin13              = COALESCE(excluded.gtin13, products.gtin13),
+                image_url           = COALESCE(excluded.image_url, products.image_url),
+                images              = COALESCE(excluded.images, products.images),
+                long_description    = COALESCE(excluded.long_description, products.long_description),
+                long_description_text = COALESCE(excluded.long_description_text, products.long_description_text),
+                product_details     = COALESCE(excluded.product_details, products.product_details),
+                seller_name         = COALESCE(excluded.seller_name, products.seller_name),
+                seller_id           = COALESCE(excluded.seller_id, products.seller_id),
+                seller_type         = COALESCE(excluded.seller_type, products.seller_type),
+                catalog_seller_id   = COALESCE(excluded.catalog_seller_id, products.catalog_seller_id),
+                seller_rating       = COALESCE(excluded.seller_rating, products.seller_rating),
+                seller_review_count = COALESCE(excluded.seller_review_count, products.seller_review_count),
+                other_sellers       = COALESCE(excluded.other_sellers, products.other_sellers)
             """,
             (
                 product_id, task_id,
@@ -278,34 +300,53 @@ def save_product(result: dict, task_id: Optional[int] = None) -> bool:
                 result.get("rating"), result.get("reviews"),
                 result.get("upc"), result.get("gtin13"),
                 result.get("image_url"),
-                json.dumps(images, ensure_ascii=False),
+                json.dumps(images, ensure_ascii=False) if images else None,
                 result.get("long_description"),
                 result.get("long_description_text"),
-                json.dumps(product_details, ensure_ascii=False),
+                json.dumps(product_details, ensure_ascii=False) if product_details else None,
                 seller.get("name"), seller.get("id"),
                 seller.get("type"), seller.get("catalog_seller_id"),
                 seller.get("rating"), seller.get("review_count"),
                 new_seller_count, result.get("other_seller_count"),
                 json.dumps(other_sellers, ensure_ascii=False) if other_sellers else None,
+                new_in_stock,
                 status,
                 # 首次插入时 prev_* 均为 None（NULL）
                 None, None, None, has_change,
             ),
         )
 
-    # ── 有变动时写 product_changes 记录 ─────────────────────────────────────
-    if change_info["has_change"]:
-        _write_change_record(product_id, task_id, change_info,
-                             new_price, new_in_stock, new_seller_count)
-        logger.debug(
-            "save_product: 检测到变动 product_id=%s 字段=%s",
-            product_id, change_info["changed_fields"],
-        )
+        # ── 有变动时写 product_changes 记录（同事务） ────────────────────────
+        if change_info["has_change"]:
+            try:
+                _write_change_record(conn, product_id, task_id, change_info,
+                                     new_price, new_in_stock, new_seller_count)
+                logger.debug(
+                    "save_product: 检测到变动 product_id=%s 字段=%s",
+                    product_id, change_info["changed_fields"],
+                )
+            except Exception as exc:
+                logger.warning("_write_change_record 写入失败（不影响主流程）: %s", exc)
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
     # 成功写入：累计商品总数
     bump_metric(total_products=1)
     logger.debug("save_product: upsert product_id=%s task_id=%s has_change=%s",
                  product_id, task_id, has_change)
+
+    # P2-1：通知 lane 产出计数（若传入 lane）
+    if lane is not None:
+        try:
+            lane.notify_product_saved()
+        except Exception as exc:
+            logger.warning("lane.notify_product_saved 失败（不影响采集）: %s", exc)
+
     return True
 
 
@@ -489,21 +530,26 @@ def _collect_with_retry(collector, product_id: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _make_collector():
-    """懒建 WalmartCollector。
+    """懒建 WalmartCollector，同时返回绑定的 Lane 引用。
 
+    P2-1：返回 (collector, lane) 元组，供 run_* 函数在封控/产出时回调
+          lane.notify_blocked / lane.notify_product_saved。
     绑定到 lane 池 lane 0 的 ProxyPool，使「采集实际用的IP」与
-    「/proxy/status 面板」「手动换IP按钮」三者共享同一个 IP（之前各用各的，
-    导致面板看不到采集在用的代理）。绑定失败时退回独立 collector。
+    「/proxy/status 面板」「手动换IP按钮」三者共享同一个 IP。
+    绑定失败时退回独立 collector（lane=None）。
     （测试中通过 monkeypatch 替换本函数。）
+
+    Returns:
+        (WalmartCollector, Lane | None)
     """
     from app.engine.collector import WalmartCollector
     try:
         from app.service.lanes import get_lane_pool
-        pool = get_lane_pool()._lanes[0]._pool
-        return WalmartCollector(pool=pool)
+        lane = get_lane_pool()._lanes[0]
+        return WalmartCollector(pool=lane._pool), lane
     except Exception:
         logger.warning("绑定 lane 池失败，使用独立 collector", exc_info=True)
-        return WalmartCollector()
+        return WalmartCollector(), None
 
 
 def run_ids(ids: list[str], with_detail: bool = True,
@@ -546,24 +592,46 @@ def run_ids(ids: list[str], with_detail: bool = True,
         completed = set()
         remaining = list(ids)
 
-    c = collector or _make_collector()
-    result_count = len(ids) - len(remaining)  # 续采时已完成数计入结果
+    # P2-1：_make_collector 现在返回 (collector, lane) 元组
+    if collector is not None:
+        c = collector
+        lane = None   # 测试注入时无 lane
+    else:
+        c, lane = _make_collector()
+
+    # P2-3：result_count 只计已真正入库的项（续采初始计数也应如此）
+    # 续采时 completed 为已 mark_item_done 的项，但其中可能包含 give_up 项，
+    # 精确计数需从 DB 读 products 表，这里保守取 0（续采计数从当前轮次重算），
+    # 避免虚增——与之前行为的唯一差异是续采初始 result_count 从 0 开始而非 len(completed)。
+    result_count = 0
+    give_up_count = 0  # 本轮 give_up / 非入库 item 数（软封检测用）
 
     try:
         for i, product_id in enumerate(remaining, 1):
             r = _collect_with_retry(c, product_id)
 
-            # 封控：lane blocked，任务标 blocked 后返回
+            # 封控：通知 lane，任务标 blocked 后返回
             if r.get("_status") in BLOCKED_STATUSES:
+                if lane is not None:
+                    try:
+                        lane.notify_blocked(
+                            f"封控 product_id={product_id} status={r.get('_status')}"
+                        )
+                    except Exception as _exc:
+                        logger.warning("lane.notify_blocked 失败: %s", _exc)
                 update_status(task_id, "blocked",
                               error_msg=f"封控 product_id={product_id}")
+                # P2-5：封控退出也触发 webhook
+                _maybe_fire_webhook(task_id, webhook_url)
                 return task_id
 
-            if save_product(r, task_id):
+            # P2-3：只有成功入库才 mark_item_done + 计入 result_count
+            saved = save_product(r, task_id, lane=lane)
+            if saved:
                 result_count += 1
-
-            # 标记该 item 已完成（无论是否成功入库）
-            mark_item_done(task_id, product_id)
+                mark_item_done(task_id, product_id)
+            else:
+                give_up_count += 1
 
             update_progress(
                 task_id,
@@ -575,6 +643,22 @@ def run_ids(ids: list[str], with_detail: bool = True,
     except Exception as exc:
         logger.exception("run_ids task_id=%d 异常", task_id)
         update_status(task_id, "failed", error_msg=str(exc))
+        # P2-5：异常退出也触发 webhook
+        _maybe_fire_webhook(task_id, webhook_url)
+        return task_id
+
+    # 软封检测：若整轮有 2+ 个 give_up/失败且入库 0，视为疑似软封
+    # "连续多个 give_up" 阈值设为 2，单项失败不误判
+    _SOFT_BLOCK_THRESHOLD = 2
+    if result_count == 0 and give_up_count >= _SOFT_BLOCK_THRESHOLD:
+        logger.warning(
+            "run_ids task_id=%d 疑似软封：%d 项全部 give_up/失败，入库 0。"
+            "建议手动换IP后重试。",
+            task_id, give_up_count,
+        )
+        update_status(task_id, "blocked",
+                      error_msg=f"疑似软封：{give_up_count} 项全部失败，入库 0")
+        _maybe_fire_webhook(task_id, webhook_url)
         return task_id
 
     update_status(task_id, "done")
@@ -621,7 +705,13 @@ def run_keyword(keyword: str, max_pages: int = 25,
         task_id = create_task("keyword", params)
     update_status(task_id, "running")
 
-    c = collector or _make_collector()
+    # P2-1：拿到 lane 引用
+    if collector is not None:
+        c = collector
+        lane = None
+    else:
+        c, lane = _make_collector()
+
     result_count = 0
     listing: list = []
     try:
@@ -642,7 +732,7 @@ def run_keyword(keyword: str, max_pages: int = 25,
 
         # 详情落库（二段式）
         for det in details:
-            if save_product(det, task_id):
+            if save_product(det, task_id, lane=lane):
                 result_count += 1
 
         update_progress(task_id, progress=len(listing),
@@ -651,6 +741,8 @@ def run_keyword(keyword: str, max_pages: int = 25,
     except Exception as exc:
         logger.exception("run_keyword task_id=%d 异常", task_id)
         update_status(task_id, "failed", error_msg=str(exc))
+        # P2-5：异常退出触发 webhook
+        _maybe_fire_webhook(task_id, webhook_url)
         return task_id
 
     update_status(task_id, "done")
@@ -686,7 +778,13 @@ def run_seller(seller_id: str, max_pages: int = 30,
         })
     update_status(task_id, "running")
 
-    c = collector or _make_collector()
+    # P2-1：拿到 lane 引用
+    if collector is not None:
+        c = collector
+        lane = None
+    else:
+        c, lane = _make_collector()
+
     result_count = 0
     listing: list = []
     try:
@@ -700,7 +798,7 @@ def run_seller(seller_id: str, max_pages: int = 30,
                         total=len(listing), result_count=written)
 
         for det in details:
-            if save_product(det, task_id):
+            if save_product(det, task_id, lane=lane):
                 result_count += 1
 
         update_progress(task_id, progress=len(listing),
@@ -709,6 +807,8 @@ def run_seller(seller_id: str, max_pages: int = 30,
     except Exception as exc:
         logger.exception("run_seller task_id=%d 异常", task_id)
         update_status(task_id, "failed", error_msg=str(exc))
+        # P2-5：异常退出触发 webhook
+        _maybe_fire_webhook(task_id, webhook_url)
         return task_id
 
     update_status(task_id, "done")

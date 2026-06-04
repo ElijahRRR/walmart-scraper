@@ -521,12 +521,12 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(len(fired), 1)
         self.assertEqual(fired[0], task_id)
 
-    def test_webhook_not_called_on_blocked(self):
-        """任务因封控结束（blocked 状态），不触发 webhook（尚未完成）。"""
+    def test_webhook_called_on_blocked(self):
+        """P2-5：任务因封控结束（blocked 状态），也应触发 webhook 通知调用方。"""
         fired = []
 
         def fake_fire(task_id, task_dict, url):
-            fired.append(task_id)
+            fired.append({"task_id": task_id, "status": task_dict.get("status")})
 
         mock_c = MagicMock()
         mock_c.collect_detail.return_value = _make_blocked_result("W004")
@@ -538,7 +538,9 @@ class TestWebhook(unittest.TestCase):
 
         task = self.tasks.get_task(task_id)
         self.assertEqual(task["status"], "blocked")
-        self.assertEqual(len(fired), 0)  # blocked 时不触发
+        # P2-5 修复后：blocked 时也触发 webhook（方便调用方感知任务异常终止）
+        self.assertEqual(len(fired), 1)
+        self.assertEqual(fired[0]["task_id"], task_id)
 
     def test_fire_webhook_uses_urllib(self):
         """_fire_webhook 内部使用 urllib.request.urlopen，不需要额外依赖。"""
@@ -573,6 +575,237 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(payload["task_id"], task_id)
         self.assertIn("status", payload)
         self.assertIn("result_count", payload)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BE3 新增测试：P1-2 COALESCE / P2-1 Lane接通 / P2-3 续采计数 / P2-15 in_stock派生
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestBE3Fixes(unittest.TestCase):
+    """BE3 数据正确性 + Lane 接通测试。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.tasks, self.runner = _reload_all(self.tmp)
+
+    def _get_product(self, product_id: str) -> dict:
+        import app.db as db
+        with db.get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM products WHERE product_id=?", (product_id,)
+            ).fetchone()
+        return dict(row) if row else {}
+
+    # ── P1-2 COALESCE：partial 不覆写已有有效字段 ─────────────────────────────
+
+    def test_coalesce_partial_does_not_overwrite_valid_fields(self):
+        """P1-2 COALESCE：partial 状态的 upsert 不应把已有的 title/upc/image_url 抹成 NULL。"""
+        task_id = self.tasks.create_task("detail", {})
+
+        # 首次入库：ok 状态，带完整字段
+        self.runner.save_product({
+            "_status": "ok",
+            "product_id": "COALESCE001",
+            "title": "完整商品标题",
+            "upc": "123456789012",
+            "image_url": "https://example.com/img.jpg",
+            "price": 10.0,
+        }, task_id)
+
+        # 第二次入库：partial 状态，title/upc/image_url 均为 None（解析失败）
+        self.runner.save_product({
+            "_status": "partial",
+            "product_id": "COALESCE001",
+            "title": None,
+            "upc": None,
+            "image_url": None,
+            "price": 12.0,  # 价格有变，确保触发 upsert
+        }, task_id)
+
+        p = self._get_product("COALESCE001")
+        # 已有有效字段不应被 NULL 覆盖
+        self.assertEqual(p["title"], "完整商品标题", "partial upsert 不应覆盖已有 title")
+        self.assertEqual(p["upc"], "123456789012", "partial upsert 不应覆盖已有 upc")
+        self.assertEqual(p["image_url"], "https://example.com/img.jpg",
+                         "partial upsert 不应覆盖已有 image_url")
+        # 价格应被更新（价格类字段无条件覆写）
+        self.assertAlmostEqual(p["price"], 12.0)
+
+    def test_coalesce_new_value_does_overwrite_null(self):
+        """P1-2 COALESCE：新值非 NULL 时仍应覆盖旧的 NULL 值。"""
+        task_id = self.tasks.create_task("detail", {})
+
+        # 首次入库：title 为 None
+        self.runner.save_product({
+            "_status": "partial",
+            "product_id": "COALESCE002",
+            "title": None,
+            "price": 5.0,
+        }, task_id)
+
+        # 第二次：补全 title
+        self.runner.save_product({
+            "_status": "ok",
+            "product_id": "COALESCE002",
+            "title": "补全后的标题",
+            "price": 5.0,
+        }, task_id)
+
+        p = self._get_product("COALESCE002")
+        self.assertEqual(p["title"], "补全后的标题")
+
+    # ── P2-1 Lane 接通：notify_blocked / notify_product_saved ────────────────
+
+    def test_lane_notify_product_saved_called_on_success(self):
+        """P2-1：save_product 成功写入后调 lane.notify_product_saved()。"""
+        mock_lane = MagicMock()
+        task_id = self.tasks.create_task("detail", {})
+
+        result = self.runner.save_product(
+            {"_status": "ok", "product_id": "LANE001", "price": 1.0},
+            task_id,
+            lane=mock_lane,
+        )
+
+        self.assertTrue(result)
+        mock_lane.notify_product_saved.assert_called_once()
+
+    def test_lane_notify_product_saved_not_called_on_skip(self):
+        """P2-1：save_product 跳过（blocked 状态）时不调 notify_product_saved。"""
+        mock_lane = MagicMock()
+        task_id = self.tasks.create_task("detail", {})
+
+        result = self.runner.save_product(
+            {"_status": "blocked", "product_id": "LANE002"},
+            task_id,
+            lane=mock_lane,
+        )
+
+        self.assertFalse(result)
+        mock_lane.notify_product_saved.assert_not_called()
+
+    def test_lane_notify_blocked_called_on_blocked_status(self):
+        """P2-1：run_ids 遇封控时调 lane.notify_blocked 并将任务标 blocked。"""
+        mock_lane = MagicMock()
+        # 让 mock_lane.state 返回非 BLOCKED（不触发提前退出）
+        from app.service.lanes import LaneState
+        mock_lane.state = LaneState.IDLE
+
+        mock_c = MagicMock()
+        mock_c.collect_detail.return_value = _make_blocked_result("LANE003")
+
+        # 通过 monkeypatch _make_collector 注入 (collector, lane)
+        with patch.object(self.runner, "_make_collector", return_value=(mock_c, mock_lane)):
+            task_id = self.runner.run_ids(["LANE003"])
+
+        task = self.tasks.get_task(task_id)
+        self.assertEqual(task["status"], "blocked")
+        mock_lane.notify_blocked.assert_called_once()
+
+    # ── P2-3 续采计数：mark_item_done 只在入库成功后调用 ──────────────────────
+
+    def test_resume_count_only_counts_saved_items(self):
+        """P2-3：续采初始 result_count 不含 give_up 历史项；当轮计数也只计入库成功的项。"""
+        # 首轮：P1 成功入库，P2 give_up（失败）
+        call_seq = {
+            "P1": _make_ok_result("P1", price=1.0),
+            "P2": {"_status": "give_up", "product_id": "P2"},
+        }
+        mock_c = MagicMock()
+        mock_c.collect_detail.side_effect = lambda pid, **kw: call_seq[pid]
+
+        task_id = self.runner.run_ids(["P1", "P2"], collector=mock_c)
+        task = self.tasks.get_task(task_id)
+
+        # P1 入库成功，P2 give_up 失败；result_count 应为 1
+        self.assertEqual(task["result_count"], 1,
+                         "result_count 应只计成功入库的项（P1），不含 give_up 项（P2）")
+
+    def test_mark_item_done_only_on_save_success(self):
+        """P2-3：mark_item_done 只在 save_product 返回 True 后调用；give_up 的 pid 不进 completed_ids。"""
+        call_seq = {
+            "P1": _make_ok_result("P1", price=2.0),
+            "P2": {"_status": "give_up", "product_id": "P2"},
+        }
+        mock_c = MagicMock()
+        mock_c.collect_detail.side_effect = lambda pid, **kw: call_seq[pid]
+
+        task_id = self.runner.run_ids(["P1", "P2"], collector=mock_c)
+        completed = self.tasks.get_completed_ids(task_id)
+
+        self.assertIn("P1", completed, "成功入库的 P1 应在 completed_ids 中")
+        self.assertNotIn("P2", completed, "give_up 的 P2 不应在 completed_ids 中")
+
+    # ── P2-15 in_stock 派生 ────────────────────────────────────────────────────
+
+    def test_parser_derives_in_stock_from_availability_status(self):
+        """P2-15：parser 从 ship_info.availability_status 派生 in_stock（整数 0/1/None）。"""
+        from app.engine.parser import WalmartParser
+
+        # 构造最小 __NEXT_DATA__ HTML（只含 shippingOption）
+        def make_html(availability_status):
+            import json
+            data = {
+                "props": {"pageProps": {"initialData": {"data": {
+                    "product": {
+                        "usItemId": "INSTOCK001",
+                        "name": "Test Product",
+                        "shippingOption": {
+                            "availabilityStatus": availability_status,
+                        },
+                    }
+                }}}}
+            }
+            return f'<script id="__NEXT_DATA__">{json.dumps(data)}</script>'
+
+        parser = WalmartParser()
+
+        # IN_STOCK → 1
+        r = parser.parse_product(make_html("IN_STOCK"), "INSTOCK001")
+        self.assertEqual(r.get("in_stock"), 1,
+                         "IN_STOCK 应派生 in_stock=1")
+
+        # OUT_OF_STOCK → 0
+        r = parser.parse_product(make_html("OUT_OF_STOCK"), "INSTOCK001")
+        self.assertEqual(r.get("in_stock"), 0,
+                         "OUT_OF_STOCK 应派生 in_stock=0")
+
+        # UNAVAILABLE → 0
+        r = parser.parse_product(make_html("UNAVAILABLE"), "INSTOCK001")
+        self.assertEqual(r.get("in_stock"), 0,
+                         "UNAVAILABLE 应派生 in_stock=0")
+
+    def test_in_stock_saved_to_db_and_triggers_change_detection(self):
+        """P2-15：in_stock 写入 products 表，并能触发 in_stock 变动检测。"""
+        task_id = self.tasks.create_task("detail", {})
+
+        # 首次入库：in_stock=1（有货）
+        self.runner.save_product({
+            "_status": "ok",
+            "product_id": "INSTOCK002",
+            "price": 5.0,
+            "in_stock": 1,
+        }, task_id)
+        p = self._get_product("INSTOCK002")
+        self.assertEqual(p["in_stock"], 1, "in_stock 应存入 products 表")
+
+        # 第二次：in_stock 变为 0（缺货）
+        self.runner.save_product({
+            "_status": "ok",
+            "product_id": "INSTOCK002",
+            "price": 5.0,
+            "in_stock": 0,
+        }, task_id)
+
+        import app.db as db
+        with db.get_conn() as conn:
+            changes = conn.execute(
+                "SELECT * FROM product_changes WHERE product_id='INSTOCK002'"
+            ).fetchall()
+        self.assertGreater(len(changes), 0, "in_stock 变动应写入 product_changes")
+        import json as _json
+        changed_fields = _json.loads(changes[0]["changed_fields"])
+        self.assertIn("in_stock", changed_fields, "changed_fields 应包含 in_stock")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -640,6 +873,7 @@ if __name__ == "__main__":
         TestRetry,
         TestChangeDetection,
         TestWebhook,
+        TestBE3Fixes,
         TestM4NoRegression,
     ]:
         suite.addTests(loader.loadTestsFromTestCase(cls))

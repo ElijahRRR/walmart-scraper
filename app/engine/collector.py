@@ -150,10 +150,34 @@ class WalmartCollector:
         return out
 
     # ── 列表翻页通用：搜索页 / 卖家shopall页 ─────────────────────────
-    def _paged_listing(self, url_fmt: str, max_pages: int) -> list[dict]:
-        """按 ?page=N 翻页收集列表项，按 product_id 去重，列表为空即停。"""
+    def _paged_listing(self, url_fmt: str, max_pages: int,
+                       first_html: Optional[str] = None) -> list[dict]:
+        """按 ?page=N 翻页收集列表项，按 product_id 去重，列表为空即停。
+
+        Args:
+            url_fmt:    含 {page} 占位符的 URL 模板
+            max_pages:  最多翻页数
+            first_html: P2-14 优化——若调用方已拿到第1页 HTML，直接复用，
+                        避免重复发请求（翻页从 page=2 起）。
+        """
         seen, items = set(), []
-        for page in range(1, max_pages + 1):
+        start_page = 1
+        if first_html is not None:
+            # 复用已有的第1页，不再请求
+            res = parse_listing(first_html)
+            fresh = [it for it in res["items"]
+                     if it["product_id"] and it["product_id"] not in seen]
+            for it in fresh:
+                seen.add(it["product_id"])
+            items += fresh
+            logger.info("[列表 p1（复用）] 本页 %d 件，新增 %d，累计 %d（count=%s maxPage=%s）",
+                        len(res["items"]), len(fresh), len(items),
+                        res.get("count"), res.get("max_page"))
+            if not fresh:
+                return items
+            start_page = 2  # 从第2页继续翻
+
+        for page in range(start_page, max_pages + 1):
             html = self._get(url_fmt.format(page=page),
                              lambda h: '__NEXT_DATA__' in h)
             if html is None:
@@ -195,10 +219,11 @@ class WalmartCollector:
                           with_detail: bool = True) -> dict:
         url_fmt = (f"{WALMART}/seller/{seller_id}/cp/shopall"
                    f"?affinityOverride=default&page={{page}}")
-        # 顺带取卖家资料（首页）
+        # P2-14：首页只发一次请求，同时提取卖家资料 + 列表项；_paged_listing 复用该 HTML。
         first = self._get(url_fmt.format(page=1), lambda h: '__NEXT_DATA__' in h)
         seller = parse_listing(first)["seller"] if first else None
-        listing = self._paged_listing(url_fmt, max_pages)
+        # 把已有的首页 HTML 传入 _paged_listing，翻页从第2页起，省一次请求
+        listing = self._paged_listing(url_fmt, max_pages, first_html=first)
         details = self._collect_details(listing) if with_detail else []
         return {"seller_id": seller_id, "seller": seller, "listing": listing,
                 "count_listing": len(listing), "details": details}
