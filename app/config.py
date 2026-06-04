@@ -2,8 +2,11 @@
 
 优先级：环境变量 > .env 文件 > 内置缺省值。
 """
+import logging
 import os
 from pathlib import Path
+
+_cfg_logger = logging.getLogger(__name__)
 
 # 尝试加载项目根目录的 .env 文件（可选依赖 python-dotenv；不存在则静默跳过）
 _ROOT = Path(__file__).parent.parent  # 项目根目录
@@ -11,10 +14,10 @@ _ROOT = Path(__file__).parent.parent  # 项目根目录
 def _load_dotenv() -> None:
     """简单的 .env 文件加载器（不依赖 python-dotenv）。
     已设置的环境变量不会被覆盖（export 优先）。
+    仅加载 .env，不 fallback 到 .env.example——示例文件只含占位符，
+    回退读取会静默使用无效 key，且会把旧泄漏 key 带入运行时。
     """
     env_file = _ROOT / ".env"
-    if not env_file.exists():
-        env_file = _ROOT / ".env.example"
     if not env_file.exists():
         return
     with open(env_file, encoding="utf-8") as f:
@@ -88,8 +91,17 @@ IP_MAX_AGE_MIN: int = _get_int("IP_MAX_AGE_MIN", 690)
 """单 IP 安全上限（分钟），默认 690 分钟（11.5h，留余量防 cliproxy 12h 掐线）"""
 
 # ── API 鉴权 ─────────────────────────────────────────────────────────────────
-API_KEY: str = _get("API_KEY", "dev-key-change-me")
+_DEFAULT_API_KEY = "dev-key-change-me"
+API_KEY: str = _get("API_KEY", _DEFAULT_API_KEY)
 """服务端 API Key（请求头 X-API-Key）；生产环境务必改掉"""
+
+# 启动告警：默认 key 仍在使用，任何知道该公开默认值的人都可调用全部受保护端点
+if API_KEY == _DEFAULT_API_KEY:
+    _cfg_logger.warning(
+        "[安全告警] API_KEY 使用默认占位值 %r，任何知道该值的人均可访问全部端点。"
+        "请在 .env 中设置随机强密码后重启服务。",
+        _DEFAULT_API_KEY,
+    )
 
 # ── 服务设置 ─────────────────────────────────────────────────────────────────
 PORT: int = _get_int("PORT", 8900)

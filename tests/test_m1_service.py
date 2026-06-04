@@ -199,10 +199,12 @@ class TestTaskStateMachine(unittest.TestCase):
         self.assertEqual(task["result_count"], 2)
 
     def test_list_tasks(self):
-        """list_tasks 返回正确条数，倒序排列"""
+        """list_tasks 返回 (items, total) 元组，条数正确且倒序排列"""
         ids = [self.tasks.create_task("detail", {"ids": [str(i)]}) for i in range(3)]
-        listed = self.tasks.list_tasks(limit=10)
+        listed, total = self.tasks.list_tasks(limit=10)
         self.assertGreaterEqual(len(listed), 3)
+        # total 应 >= 当前页条数
+        self.assertGreaterEqual(total, len(listed))
         # 倒序：最新 id 在前
         id_list = [t["id"] for t in listed]
         self.assertEqual(sorted(id_list, reverse=True)[:3], id_list[:3])
@@ -217,6 +219,32 @@ class TestTaskStateMachine(unittest.TestCase):
         task_id = self.tasks.create_task("detail", {})
         with self.assertRaises(ValueError):
             self.tasks.update_status(task_id, "unknown")
+
+    def test_state_machine_blocks_terminal_backward(self):
+        """P3-1: done/failed 终态不允许回退到 running/pending"""
+        task_id = self.tasks.create_task("detail", {"ids": ["A"]})
+        self.tasks.update_status(task_id, "running")
+        self.tasks.update_status(task_id, "done")
+        # 尝试将 done 回退到 running — 应被静默忽略，状态保持 done
+        self.tasks.update_status(task_id, "running")
+        self.assertEqual(self.tasks.get_task(task_id)["status"], "done")
+
+    def test_state_machine_allow_resume_bypasses_guard(self):
+        """P3-1: allow_resume=True 允许续采将 done 重置为 running"""
+        task_id = self.tasks.create_task("detail", {"ids": ["A"]})
+        self.tasks.update_status(task_id, "running")
+        self.tasks.update_status(task_id, "done")
+        # 续采路径显式允许
+        self.tasks.update_status(task_id, "running", allow_resume=True)
+        self.assertEqual(self.tasks.get_task(task_id)["status"], "running")
+
+    def test_state_machine_valid_forward_transitions(self):
+        """P3-1: pending→running→blocked 合法转换正常执行"""
+        task_id = self.tasks.create_task("detail", {"ids": ["A"]})
+        self.tasks.update_status(task_id, "running")
+        self.assertEqual(self.tasks.get_task(task_id)["status"], "running")
+        self.tasks.update_status(task_id, "blocked", error_msg="封控")
+        self.assertEqual(self.tasks.get_task(task_id)["status"], "blocked")
 
 
 class TestSaveProduct(unittest.TestCase):

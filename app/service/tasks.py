@@ -67,25 +67,67 @@ def _guess_total(type_: str, params: dict) -> int:
     return 0  # keyword/seller 翻页数量未知
 
 
-def update_status(task_id: int, status: str, error_msg: Optional[str] = None) -> None:
-    """更新任务状态。
+# 终态集合：进入后不得被外部随意回退
+_TERMINAL_STATUSES = {"done", "blocked", "failed"}
+
+# 合法的前向转换表（不包含显式续采路径，见 allow_resume 参数）
+_VALID_TRANSITIONS: dict[str, set[str]] = {
+    "pending":  {"running", "failed"},
+    "running":  {"done", "failed", "blocked"},
+    "done":     set(),        # 终态，禁止任何外部覆写
+    "blocked":  {"done", "failed"},   # 换IP后可恢复或失败
+    "failed":   set(),        # 终态，禁止任何外部覆写
+}
+
+
+def update_status(
+    task_id: int,
+    status: str,
+    error_msg: Optional[str] = None,
+    allow_resume: bool = False,
+) -> None:
+    """更新任务状态，强制单向状态机转换。
 
     Args:
-        task_id:   任务 id
-        status:    目标状态（必须在 VALID_STATUSES 内）
-        error_msg: failed/blocked 时附加说明（可选）
+        task_id:      任务 id
+        status:       目标状态（必须在 VALID_STATUSES 内）
+        error_msg:    failed/blocked 时附加说明（可选）
+        allow_resume: 若为 True，允许 runner 将终态任务重置为 running/pending
+                      （断点续采显式路径专用，勿滥用）
     """
     if status not in VALID_STATUSES:
         raise ValueError(f"不合法的状态: {status!r}，必须是 {VALID_STATUSES}")
 
     with get_conn() as conn:
+        row = conn.execute("SELECT status FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if row is None:
+            logger.warning("update_status task_id=%d 不存在，跳过", task_id)
+            return
+
+        current = row["status"]
+        allowed = _VALID_TRANSITIONS.get(current, set())
+
+        if status not in allowed:
+            if allow_resume and current in _TERMINAL_STATUSES and status in ("running", "pending"):
+                # runner 续采路径：允许终态 → running/pending，记警告便于排查
+                logger.warning(
+                    "update_status task_id=%d %s → %s（allow_resume 显式续采）",
+                    task_id, current, status,
+                )
+            else:
+                logger.warning(
+                    "update_status task_id=%d 拒绝非法转换 %s → %s，状态保持不变",
+                    task_id, current, status,
+                )
+                return
+
         conn.execute(
             "UPDATE tasks SET status=?, error_msg=?,"
             " updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')"
             " WHERE id=?",
             (status, error_msg, task_id),
         )
-    logger.info("update_status task_id=%d → %s", task_id, status)
+    logger.info("update_status task_id=%d %s → %s", task_id, current, status)
 
 
 def update_progress(task_id: int, progress: int,
@@ -174,9 +216,15 @@ def get_completed_ids(task_id: int) -> set[str]:
         return set()
 
 
-def list_tasks(limit: int = 20, offset: int = 0) -> list[dict]:
-    """分页列出任务（按 id 倒序：最新的在前）。"""
+def list_tasks(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
+    """分页列出任务（按 id 倒序：最新的在前）。
+
+    Returns:
+        (items, total) — items 为当前页条目列表，total 为全表任务总数（用于前端分页）。
+    """
     with get_conn() as conn:
+        total_row = conn.execute("SELECT COUNT(*) AS cnt FROM tasks").fetchone()
+        total: int = total_row["cnt"] if total_row else 0
         rows = conn.execute(
             "SELECT * FROM tasks ORDER BY id DESC LIMIT ? OFFSET ?",
             (limit, offset),
@@ -189,4 +237,4 @@ def list_tasks(limit: int = 20, offset: int = 0) -> list[dict]:
         except (json.JSONDecodeError, TypeError):
             pass
         out.append(d)
-    return out
+    return out, total

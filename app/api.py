@@ -16,6 +16,7 @@
 
 鉴权：除 /health 和 GET / 外所有端点需要请求头 X-API-Key（与 config.API_KEY 比对）。
 """
+import hmac
 import logging
 import threading
 from contextlib import asynccontextmanager
@@ -60,6 +61,11 @@ app = FastAPI(
     description="沃尔玛商品数据采集 REST API",
     version="0.3.0",
     lifespan=lifespan,
+    # 关闭内置文档端点：/docs、/redoc、/openapi.json 默认暴露且无鉴权，
+    # 降低攻击者发现端点结构的门槛。内网服务无需对外暴露接口文档。
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 # CORS 中间件：允许 Nuxt 前端 (localhost:3000) 及本地开发访问
@@ -87,9 +93,10 @@ if _WEB_DIR.exists():
 def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> str:
     """依赖注入：验证 X-API-Key 请求头。
 
+    使用恒时比较（hmac.compare_digest）防止计时侧信道攻击。
     正确 key 透传；错误/缺失返回 401。
     """
-    if not x_api_key or x_api_key != config.API_KEY:
+    if not x_api_key or not hmac.compare_digest(x_api_key, config.API_KEY):
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
     return x_api_key
 
@@ -267,6 +274,15 @@ async def collect_import(
         raise HTTPException(status_code=400, detail="type 必须是 ids | keyword | seller")
 
     content = await file.read()
+
+    # 文件大小限制：超过 10 MB 直接拒绝，防止内存 DoS（zip bomb 等）
+    _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+    if len(content) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"文件过大（{len(content)} 字节），上限 {_MAX_UPLOAD_BYTES} 字节（10 MB）",
+        )
+
     try:
         tokens = parse_upload(file.filename, content)
     except RuntimeError as exc:
@@ -313,9 +329,9 @@ def list_tasks_api(
     offset: int = Query(0, ge=0, description="偏移量（基于 offset 分页）"),
     _key: str = Depends(require_api_key),
 ):
-    """分页列出任务（按 id 倒序，最新在前）。"""
-    tasks = list_tasks(limit=limit, offset=offset)
-    return {"items": tasks, "count": len(tasks), "limit": limit, "offset": offset}
+    """分页列出任务（按 id 倒序，最新在前）。返回 total 供前端分页计算。"""
+    tasks, total = list_tasks(limit=limit, offset=offset)
+    return {"items": tasks, "count": len(tasks), "total": total, "limit": limit, "offset": offset}
 
 
 @app.get("/tasks/{task_id}", tags=["tasks"])

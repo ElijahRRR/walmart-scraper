@@ -34,6 +34,10 @@ def parse_upload(filename: str, content: bytes) -> List[str]:
     """
     name = (filename or "").lower()
     if name.endswith(".xlsx"):
+        # 校验 magic bytes：OOXML（.xlsx）本质是 ZIP，头部必须是 PK\x03\x04
+        # 防止上传伪装成 .xlsx 的非 ZIP 文件交给 openpyxl 解析
+        if not content.startswith(b"PK\x03\x04"):
+            raise RuntimeError("文件内容与 .xlsx 扩展名不符（非 ZIP/OOXML 格式），请确认文件完整性")
         tokens = _parse_xlsx(content)
     elif name.endswith(".xls"):
         raise RuntimeError("暂不支持 .xls，请另存为 .xlsx 或 .csv 后再导入")
@@ -53,7 +57,10 @@ def _parse_text(content: bytes) -> List[str]:
         line = line.strip()
         if not line:
             continue
-        if "," in line:  # csv：取第一列
+        # TSV（Tab 分隔，Windows Excel 另存常见）：取第一段，丢弃后续列
+        if "\t" in line:
+            line = line.split("\t", 1)[0].strip()
+        elif "," in line:  # csv：取第一列
             line = line.split(",", 1)[0].strip()
         if line:
             out.append(line)

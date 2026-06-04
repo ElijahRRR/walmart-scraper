@@ -64,6 +64,25 @@ class TestParseUpload(unittest.TestCase):
     def test_empty_returns_empty(self):
         self.assertEqual(parse_upload("e.txt", b"\n\n# only comment\n"), [])
 
+    def test_tsv_tab_separator(self):
+        """P2-16: TSV 行（Tab 分隔）应只取第一段，丢弃后续列"""
+        content = "1234567890\t商品名称\n9876543210\t另一个\n".encode("utf-8")
+        out = parse_upload("ids.txt", content)
+        self.assertEqual(out, ["1234567890", "9876543210"])
+
+    def test_tsv_mixed_with_plain(self):
+        """P2-16: Tab 行与普通行混合，各自正确解析"""
+        content = "111\n222\t商品名\n333\n".encode("utf-8")
+        out = parse_upload("ids.txt", content)
+        self.assertEqual(out, ["111", "222", "333"])
+
+    def test_xlsx_bad_magic_bytes_rejected(self):
+        """P2-10: 扩展名 .xlsx 但内容非 ZIP，应抛 RuntimeError"""
+        fake_content = b"This is not a zip file at all"
+        with self.assertRaises(RuntimeError) as ctx:
+            parse_upload("ids.xlsx", fake_content)
+        self.assertIn("xlsx", str(ctx.exception).lower())
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # /collect/import 端点测试
@@ -131,6 +150,13 @@ class TestImportEndpoint(unittest.TestCase):
         files = {"file": ("ids.txt", b"111\n")}
         r = self.client.post("/collect/import", files=files, data={"type": "ids"})
         self.assertEqual(r.status_code, 401)
+
+    def test_oversized_file_400(self):
+        """P2-10: 超过 10 MB 的文件应返回 400"""
+        big_content = b"1" * (10 * 1024 * 1024 + 1)
+        r = self._post(big_content, "ids.txt", type="ids")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("过大", r.json()["detail"])
 
 
 if __name__ == "__main__":

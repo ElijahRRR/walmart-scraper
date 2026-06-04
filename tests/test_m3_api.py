@@ -244,7 +244,7 @@ class TestTaskEndpoints(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
 
     def test_list_tasks_returns_items(self):
-        """GET /tasks 返回分页列表，含 items/count/limit/offset。"""
+        """GET /tasks 返回分页列表，含 items/count/limit/offset/total。"""
         for i in range(3):
             self._create_task()
         resp = self.client.get("/tasks?limit=10&offset=0", headers=self.headers)
@@ -254,7 +254,20 @@ class TestTaskEndpoints(unittest.TestCase):
         self.assertIn("count", data)
         self.assertIn("limit", data)
         self.assertIn("offset", data)
+        # P2-11 修复：必须包含 total 字段供前端分页
+        self.assertIn("total", data)
         self.assertGreaterEqual(data["count"], 3)
+
+    def test_list_tasks_total_ge_count(self):
+        """P2-11: GET /tasks total >= count，分页时 total 反映全表行数。"""
+        for _ in range(5):
+            self._create_task()
+        # 只取 2 条
+        resp = self.client.get("/tasks?limit=2&offset=0", headers=self.headers)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["count"], 2)
+        self.assertGreaterEqual(data["total"], 5)
 
     def test_list_tasks_pagination(self):
         """GET /tasks 分页参数生效（limit=1 应只返回1条）。"""

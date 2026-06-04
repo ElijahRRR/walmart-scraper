@@ -536,7 +536,8 @@ def run_ids(ids: list[str], with_detail: bool = True,
             "run_ids 续采 task_id=%d 共%d项，已完成%d项，剩余%d项",
             task_id, len(ids), len(completed), len(remaining),
         )
-        update_status(task_id, "running")
+        # allow_resume=True：续采允许将 done/blocked/failed 重置为 running
+        update_status(task_id, "running", allow_resume=True)
     else:
         # task_id 由调用方（API）提供则复用，否则新建（CLI/独立调用）
         if task_id is None:
