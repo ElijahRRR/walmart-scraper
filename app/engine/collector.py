@@ -174,13 +174,18 @@ class WalmartCollector:
                         len(res["items"]), len(fresh), len(items),
                         res.get("count"), res.get("max_page"))
             if not fresh:
-                return items
+                return items, False  # 第1页即到底，自然结束
             start_page = 2  # 从第2页继续翻
 
+        truncated = False  # True = 翻页中途被封/请求失败而提前停（数据不完整）
         for page in range(start_page, max_pages + 1):
             html = self._get(url_fmt.format(page=page),
                              lambda h: '__NEXT_DATA__' in h)
             if html is None:
+                # _get 返回 None：封控(200挑战页)/请求失败 → 翻页被截断，数据不完整
+                truncated = True
+                logger.warning("[列表 p%d] 取页失败/被封，翻页中断，累计 %d 件（不完整）",
+                               page, len(items))
                 break
             res = parse_listing(html)
             fresh = [it for it in res["items"]
@@ -191,9 +196,9 @@ class WalmartCollector:
             logger.info("[列表 p%d] 本页 %d 件，新增 %d，累计 %d（count=%s maxPage=%s）",
                         page, len(res["items"]), len(fresh), len(items),
                         res.get("count"), res.get("max_page"))
-            if not fresh:  # 整页无新商品 → 到底
+            if not fresh:  # 整页无新商品 → 到底（自然结束）
                 break
-        return items
+        return items, truncated
 
     # ── 流程2：关键词采集 ─────────────────────────────────────────
     def collect_by_keyword(self, keyword: str, max_pages: int = 25,
@@ -209,10 +214,11 @@ class WalmartCollector:
         if max_price is not None:
             url_fmt += f"&max_price={max_price:g}"
         url_fmt += "&page={page}"
-        listing = self._paged_listing(url_fmt, min(max_pages, SEARCH_PAGE_CAP))
+        listing, truncated = self._paged_listing(url_fmt, min(max_pages, SEARCH_PAGE_CAP))
         details = self._collect_details(listing) if with_detail else []
         return {"keyword": keyword, "price_range": (min_price, max_price),
-                "listing": listing, "count_listing": len(listing), "details": details}
+                "listing": listing, "count_listing": len(listing),
+                "details": details, "truncated": truncated}
 
     # ── 流程3：卖家全店采集 ───────────────────────────────────────
     def collect_by_seller(self, seller_id: str | int, max_pages: int = 30,
@@ -223,10 +229,10 @@ class WalmartCollector:
         first = self._get(url_fmt.format(page=1), lambda h: '__NEXT_DATA__' in h)
         seller = parse_listing(first)["seller"] if first else None
         # 把已有的首页 HTML 传入 _paged_listing，翻页从第2页起，省一次请求
-        listing = self._paged_listing(url_fmt, max_pages, first_html=first)
+        listing, truncated = self._paged_listing(url_fmt, max_pages, first_html=first)
         details = self._collect_details(listing) if with_detail else []
         return {"seller_id": seller_id, "seller": seller, "listing": listing,
-                "count_listing": len(listing), "details": details}
+                "count_listing": len(listing), "details": details, "truncated": truncated}
 
 
 if __name__ == "__main__":

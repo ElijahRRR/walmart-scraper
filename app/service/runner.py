@@ -687,7 +687,8 @@ _SOFT_BLOCK_THRESHOLD = 2  # 整轮 give_up 达此数且入库 0 → 疑似软�
 
 
 def _process_listing(c, lane, task_id: int, listing: list, with_detail: bool,
-                     webhook_url: Optional[str], label: str) -> tuple[str, int]:
+                     webhook_url: Optional[str], label: str,
+                     listing_truncated: bool = False) -> tuple[str, int]:
     """关键词/卖家采集的第二步：列表落库 +（可选）逐个采详情，带**增量进度**。
 
     两步进度：
@@ -736,6 +737,18 @@ def _process_listing(c, lane, task_id: int, listing: list, with_detail: bool,
                       error_msg=f"疑似软封：{give_up} 项详情全部失败，入库 0")
         _maybe_fire_webhook(task_id, webhook_url)
         return ("blocked", 0)
+
+    # 列表翻页中途被封 → 数据不完整，标 blocked（即使详情都采到了），提示换IP重采
+    if listing_truncated:
+        logger.warning("%s 列表翻页中途被封，仅获取 %d 件（不完整），已采详情 %d 件",
+                       label, total, result_count)
+        if lane is not None:
+            lane.notify_blocked(f"翻页被封：{label} 列表不完整（{total} 件）")
+        update_status(task_id, "blocked",
+                      error_msg=f"翻页中途被封，列表不完整（仅 {total} 件，已入库 {result_count}）。"
+                                f"建议换住宅IP后重采。")
+        _maybe_fire_webhook(task_id, webhook_url)
+        return ("blocked", result_count)
 
     return ("done", result_count)
 
@@ -799,7 +812,8 @@ def run_keyword(keyword: str, max_pages: int = 25,
 
         # 阶段2：列表落库 + 逐个采详情（带增量进度）
         outcome, result_count = _process_listing(
-            c, lane, task_id, listing, with_detail, webhook_url, f"keyword={keyword!r}")
+            c, lane, task_id, listing, with_detail, webhook_url, f"keyword={keyword!r}",
+            listing_truncated=result.get("truncated", False))
         if outcome == "blocked":
             return task_id
 
@@ -866,7 +880,8 @@ def run_seller(seller_id: str, max_pages: int = 30,
 
         # 阶段2：列表落库 + 逐个采详情（带增量进度）
         outcome, result_count = _process_listing(
-            c, lane, task_id, listing, with_detail, webhook_url, f"seller={seller_id}")
+            c, lane, task_id, listing, with_detail, webhook_url, f"seller={seller_id}",
+            listing_truncated=result.get("truncated", False))
         if outcome == "blocked":
             return task_id
 
