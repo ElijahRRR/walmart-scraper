@@ -15,6 +15,7 @@
   GET  /proxy/status                    — 当前所有 lane 的IP/状态
 
 鉴权：除 /health 和 GET / 外所有端点需要请求头 X-API-Key（与 config.API_KEY 比对）。
+      可在 .env 设置 REQUIRE_API_KEY=false 完全关闭鉴权（仅限可信内网）。
 """
 import hmac
 import logging
@@ -112,7 +113,10 @@ def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> str:
 
     使用恒时比较（hmac.compare_digest）防止计时侧信道攻击。
     正确 key 透传；错误/缺失返回 401。
+    当 config.REQUIRE_API_KEY=False 时完全跳过校验（内网免鉴权模式）。
     """
+    if not config.REQUIRE_API_KEY:
+        return ""  # 鉴权已关闭（REQUIRE_API_KEY=false）
     if not x_api_key or not hmac.compare_digest(x_api_key, config.API_KEY):
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
     return x_api_key

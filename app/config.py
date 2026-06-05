@@ -95,8 +95,18 @@ _DEFAULT_API_KEY = "dev-key-change-me"
 API_KEY: str = _get("API_KEY", _DEFAULT_API_KEY)
 """服务端 API Key（请求头 X-API-Key）；生产环境务必改掉"""
 
-# 启动告警：默认 key 仍在使用，任何知道该公开默认值的人都可调用全部受保护端点
-if API_KEY == _DEFAULT_API_KEY:
+REQUIRE_API_KEY: bool = _get_bool("REQUIRE_API_KEY", True)
+"""是否启用 X-API-Key 鉴权。True=默认，校验请求头；
+False=完全关闭鉴权（所有端点免 key 访问），仅限可信内网环境。"""
+
+if not REQUIRE_API_KEY:
+    # 鉴权已关闭：所有端点对任何能访问到服务的人开放
+    _cfg_logger.warning(
+        "[安全告警] REQUIRE_API_KEY=false，已关闭 X-API-Key 鉴权，"
+        "所有端点无需 key 即可访问。请仅在可信内网环境使用。"
+    )
+# 启动告警：鉴权开启但仍在用默认 key，任何知道该公开默认值的人都可调用全部受保护端点
+elif API_KEY == _DEFAULT_API_KEY:
     _cfg_logger.warning(
         "[安全告警] API_KEY 使用默认占位值 %r，任何知道该值的人均可访问全部端点。"
         "请在 .env 中设置随机强密码后重启服务。",
@@ -129,6 +139,7 @@ settings: dict = {
     "auto_rotate": AUTO_ROTATE,
     "ip_max_age_min": IP_MAX_AGE_MIN,
     "api_key": API_KEY,
+    "require_api_key": REQUIRE_API_KEY,
     "port": PORT,
     "db_path": DB_PATH,
     "webhook_url": WEBHOOK_URL,
