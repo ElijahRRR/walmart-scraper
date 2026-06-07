@@ -263,36 +263,37 @@ class TestMetricsUI(unittest.TestCase):
         self.client, _ = _make_client(self._tmp)
 
     def test_html_references_metrics_api(self):
-        """GET / 返回的 HTML 中包含 /metrics 路径。"""
+        """前端引用 /metrics 路径（KPI 指标条轮询）。"""
         resp = self.client.get("/")
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("/metrics", resp.text)
+        from tests.test_m5_ui import _ui_src
+        self.assertIn("/metrics", _ui_src())
 
     def test_html_has_metrics_panel(self):
-        """HTML 包含指标面板相关标识（metricsCard 或 指标）。"""
-        resp = self.client.get("/")
-        html = resp.text
+        """前端包含指标面板（MetricsStrip / 指标）。"""
+        from tests.test_m5_ui import _ui_src
+        html = _ui_src()
         self.assertTrue(
-            "metricsCard" in html or "指标" in html or "metrics" in html.lower(),
-            "HTML 应包含指标面板",
+            "MetricsStrip" in html or "指标" in html or "metrics" in html.lower(),
+            "前端应包含指标面板",
         )
 
     def test_html_shows_success_rate(self):
-        """HTML 中包含成功率（success_rate 或 成功率）显示逻辑。"""
-        resp = self.client.get("/")
-        html = resp.text
+        """前端包含成功率（success_rate 或 成功率）显示逻辑。"""
+        from tests.test_m5_ui import _ui_src
+        html = _ui_src()
         self.assertTrue(
             "success_rate" in html or "成功率" in html,
-            "HTML 应显示成功率",
+            "前端应显示成功率",
         )
 
     def test_html_shows_blocked_rate(self):
-        """HTML 中包含封控率（blocked_rate 或 封控率）显示逻辑。"""
-        resp = self.client.get("/")
-        html = resp.text
+        """前端包含封控率（blocked_rate 或 封控率）显示逻辑。"""
+        from tests.test_m5_ui import _ui_src
+        html = _ui_src()
         self.assertTrue(
             "blocked_rate" in html or "封控率" in html,
-            "HTML 应显示封控率",
+            "前端应显示封控率",
         )
 
 

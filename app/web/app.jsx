@@ -29,6 +29,7 @@ function App() {
   const [sel, setSel] = useState(() => new Set());
   const [viewTask, setViewTask] = useState(null);
   const [rotating, setRotating] = useState(null);
+  const [exporting, setExporting] = useState(null);
   const [interval_, setInterval_] = useState(5);
   const [refreshing, setRefreshing] = useState(false);
   const [apiKey, setApiKey] = useState(() => window.API.getKey());
@@ -125,6 +126,18 @@ function App() {
     } catch (e) { toast("warn", "删除失败：" + e.message); }
   }
 
+  async function exportSel(fmt) {
+    const ids = [...sel];
+    if (!ids.length || exporting) return;
+    setExporting(fmt);
+    try {
+      await window.API.downloadTasks("products", fmt, ids);
+      toast("ok", `已导出 ${ids.length} 个任务的商品数据（${fmt.toUpperCase()}）`);
+    } catch (e) {
+      toast("warn", "导出失败：" + e.message);
+    } finally { setExporting(null); }
+  }
+
   async function rotate(laneId) {
     setRotating(laneId);
     try {
@@ -191,6 +204,7 @@ function App() {
         <TaskList
           tasks={tasks} sel={sel} onToggleSel={toggleSel} onToggleAll={toggleAll}
           onView={setViewTask} onDelete={deleteSel}
+          onExport={exportSel} exporting={exporting}
           interval={interval_} setInterval_={setInterval_}
           onRefresh={manualRefresh} refreshing={refreshing}
         />

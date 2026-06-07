@@ -25,6 +25,20 @@ if str(PROJECT_ROOT) not in sys.path:
 import app.config as cfg_module
 
 
+def _ui_src() -> str:
+    """新前端是多文件 React 包（index.html 仅作壳，内容在 jsx/api.js）。
+    聚合 app/web 下全部前端源用于"UI 是否具备某能力"的内容断言。"""
+    web = PROJECT_ROOT / "app" / "web"
+    parts = []
+    for pat in ("*.html", "*.jsx", "*.js", "*.css"):
+        for p in sorted(web.glob(pat)):
+            try:
+                parts.append(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    return "\n".join(parts)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 辅助：临时 DB + TestClient
 # ─────────────────────────────────────────────────────────────────────────────
@@ -81,7 +95,7 @@ class TestUIIndex(unittest.TestCase):
     def test_html_contains_ids_form(self):
         """HTML 包含 ID 列表表单元素（ids 模式）。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         # 标签页或面板 ids
         self.assertIn("ids", html.lower())
         # textarea 用于多行 ID 输入
@@ -90,7 +104,7 @@ class TestUIIndex(unittest.TestCase):
     def test_html_contains_keyword_form(self):
         """HTML 包含关键词搜索表单元素（keyword 模式）。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         self.assertIn("keyword", html.lower())
         # max_pages 字段
         self.assertIn("max_pages", html.lower())
@@ -101,33 +115,33 @@ class TestUIIndex(unittest.TestCase):
     def test_html_contains_seller_form(self):
         """HTML 包含卖家采集表单元素（seller 模式）。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         self.assertIn("seller", html.lower())
         self.assertIn("seller_id", html.lower())
 
     def test_html_has_with_detail_option(self):
         """三种表单均有 with_detail（详情采集）选项。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         # 至少出现一次 with_detail 或 detail（checkbox）
         self.assertTrue("detail" in html.lower())
 
     def test_html_references_collect_ids_api(self):
         """HTML 中 JS 引用了 /collect/ids 路径。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         self.assertIn("/collect/ids", html)
 
     def test_html_references_collect_keyword_api(self):
         """HTML 中 JS 引用了 /collect/keyword 路径。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         self.assertIn("/collect/keyword", html)
 
     def test_html_references_collect_seller_api(self):
         """HTML 中 JS 引用了 /collect/seller 路径。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         self.assertIn("/collect/seller", html)
 
 
@@ -145,25 +159,26 @@ class TestUITasksAndResults(unittest.TestCase):
     def test_html_references_tasks_api(self):
         """HTML 中 JS 引用了 /tasks 路径（用于轮询任务列表）。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         self.assertIn("/tasks", html)
 
     def test_html_references_products_api(self):
-        """HTML 中 JS 引用了 /products 路径（结果查看）。"""
+        """前端引用 products 结果接口（loadAll/export 动态拼 /${kind}）。"""
         resp = self.client.get("/")
-        html = resp.text
-        self.assertIn("/products", html)
+        html = _ui_src()
+        self.assertIn("products", html.lower())
+        self.assertIn("loadAll", html)  # keyset 拉取 products/listings
 
     def test_html_references_listings_api(self):
-        """HTML 中 JS 引用了 /listings 路径（列表数据查看）。"""
+        """前端引用 listings 结果接口。"""
         resp = self.client.get("/")
-        html = resp.text
-        self.assertIn("/listings", html)
+        html = _ui_src()
+        self.assertIn("listings", html.lower())
 
     def test_html_has_tasks_table(self):
         """HTML 包含任务列表表格结构。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         self.assertIn("<table", html.lower())
         # 任务列表标识
         self.assertIn("tasks", html.lower())
@@ -171,7 +186,7 @@ class TestUITasksAndResults(unittest.TestCase):
     def test_html_has_result_view(self):
         """HTML 包含结果查看区域（products / listings 标签或按钮）。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         # 应有 products 和 listings 结果展示的切换
         self.assertIn("products", html.lower())
         self.assertIn("listings", html.lower())
@@ -179,7 +194,7 @@ class TestUITasksAndResults(unittest.TestCase):
     def test_html_has_auto_refresh_indicator(self):
         """HTML 包含自动刷新（轮询）相关逻辑。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         # setInterval 或 auto-refresh 字样
         self.assertTrue("setInterval" in html or "auto-refresh" in html or "refresh" in html.lower())
 
@@ -198,38 +213,38 @@ class TestUIProxyControls(unittest.TestCase):
     def test_html_references_proxy_status_api(self):
         """HTML 中 JS 引用了 /proxy/status 路径。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         self.assertIn("/proxy/status", html)
 
     def test_html_references_proxy_rotate_api(self):
         """HTML 中 JS 引用了 /proxy/rotate 路径。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         self.assertIn("/proxy/rotate", html)
 
     def test_html_has_rotate_button(self):
         """HTML 包含「换IP」或「切换 IP」按钮相关文字。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         # 换IP/切换 IP/获取IP 等字样
         self.assertTrue("ip" in html.lower() or "rotate" in html.lower())
 
     def test_html_shows_blocked_warning_logic(self):
         """HTML 包含封控状态提示相关代码（blocked 字样）。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         self.assertIn("blocked", html.lower())
 
     def test_html_shows_ip_age_info(self):
         """HTML 包含 IP 寿命相关展示（ip_age_sec 或寿命字样）。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         self.assertTrue("ip_age_sec" in html or "寿命" in html)
 
     def test_html_has_lane_id_input(self):
         """HTML 包含 lane_id 选择输入（多 lane 场景）。"""
         resp = self.client.get("/")
-        html = resp.text
+        html = _ui_src()
         self.assertIn("lane_id", html.lower())
 
 

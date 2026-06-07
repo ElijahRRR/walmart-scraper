@@ -580,19 +580,33 @@ def list_listings(
 def export_data(
     kind: str,
     fmt: str = Query("csv", description="csv | xlsx"),
-    task_id: Optional[int] = Query(None, description="按任务过滤（可选）"),
+    task_id: Optional[int] = Query(None, description="按单任务过滤（可选）"),
+    task_ids: Optional[str] = Query(None, description="多任务过滤，逗号分隔（勾选批量导出用）"),
     _key: str = Depends(require_api_key),
 ):
-    """导出 products / listings 为 CSV 或 Excel 文件下载。"""
+    """导出 products / listings 为 CSV 或 Excel 文件下载。
+
+    task_ids（逗号分隔）优先于 task_id；都不传则导出全部。
+    """
     if kind not in ("products", "listings"):
         raise HTTPException(status_code=400, detail="kind 必须是 products | listings")
     if fmt not in ("csv", "xlsx"):
         raise HTTPException(status_code=400, detail="fmt 必须是 csv | xlsx")
 
+    ids: Optional[list[int]] = None
+    if task_ids:
+        try:
+            ids = [int(x) for x in task_ids.split(",") if x.strip()]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="task_ids 必须是逗号分隔的整数")
+    elif task_id is not None:
+        ids = [task_id]
+
     with get_conn() as conn:
-        if task_id is not None:
+        if ids:
+            ph = ",".join("?" * len(ids))
             rows = conn.execute(
-                f"SELECT * FROM {kind} WHERE task_id=? ORDER BY id ASC", (task_id,)
+                f"SELECT * FROM {kind} WHERE task_id IN ({ph}) ORDER BY id ASC", ids
             ).fetchall()
         else:
             rows = conn.execute(f"SELECT * FROM {kind} ORDER BY id ASC").fetchall()
@@ -604,9 +618,11 @@ def export_data(
 
     dict_rows = [dict(r) for r in rows]
     # 文件名用任务 code（task{id}_{日期}_{时间}），如 products_task1_20260603_111918.csv
-    if task_id is not None:
-        task = get_task(task_id)
-        suffix = "_" + (task["code"] if task else f"task{task_id}")
+    if ids and len(ids) == 1:
+        task = get_task(ids[0])
+        suffix = "_" + (task["code"] if task else f"task{ids[0]}")
+    elif ids:
+        suffix = f"_{len(ids)}tasks"
     else:
         suffix = "_all"
     fname = f"{kind}{suffix}.{fmt}"

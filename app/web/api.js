@@ -89,19 +89,25 @@
   }
 
   /* ---------- 导出（带鉴权头 → blob 下载）---------- */
-  async function download(kind, fmt, taskId) {
-    const r = await fetch(`/export/${kind}?fmt=${fmt}&task_id=${taskId}`, {
-      headers: { "X-API-Key": _key },
-    });
+  async function _downloadUrl(reqUrl, fallback) {
+    const r = await fetch(reqUrl, { headers: { "X-API-Key": _key } });
     if (!r.ok) throw new Error("导出失败 HTTP " + r.status);
     const blob = await r.blob();
     const cd = r.headers.get("content-disposition") || "";
     const m = cd.match(/filename="?([^"]+)"?/);
-    const name = m ? m[1] : `${kind}.${fmt}`;
-    const url = URL.createObjectURL(blob);
+    const name = m ? m[1] : (fallback || "export.csv");
+    const objUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = name; document.body.appendChild(a); a.click();
-    a.remove(); URL.revokeObjectURL(url);
+    a.href = objUrl; a.download = name; document.body.appendChild(a); a.click();
+    a.remove(); URL.revokeObjectURL(objUrl);
+  }
+  // 单任务导出（结果抽屉用）
+  function download(kind, fmt, taskId) {
+    return _downloadUrl(`/export/${kind}?fmt=${fmt}&task_id=${taskId}`, `${kind}.${fmt}`);
+  }
+  // 多任务批量导出（任务列表勾选用）
+  function downloadTasks(kind, fmt, taskIds) {
+    return _downloadUrl(`/export/${kind}?fmt=${fmt}&task_ids=${taskIds.join(",")}`, `${kind}_${taskIds.length}tasks.${fmt}`);
   }
 
   window.API = {
@@ -122,6 +128,6 @@
     },
     deleteTasks: (ids) => req("/tasks/delete", { json: { task_ids: ids } }),
     rotate: (lane_id) => req("/proxy/rotate", { json: { lane_id } }),
-    loadAll, download,
+    loadAll, download, downloadTasks,
   };
 })();

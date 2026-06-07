@@ -7,7 +7,7 @@ const PROG_COLOR = {
   running: "var(--wm)", pending: "var(--border-strong)",
 };
 
-function TaskList({ tasks, sel, onToggleSel, onToggleAll, onView, onDelete, interval, setInterval_, onRefresh, refreshing }) {
+function TaskList({ tasks, sel, onToggleSel, onToggleAll, onView, onDelete, onExport, exporting, interval, setInterval_, onRefresh, refreshing }) {
   const selCount = sel.size;
   const allOn = tasks.length > 0 && tasks.every((t) => sel.has(t.id));
 
@@ -28,9 +28,21 @@ function TaskList({ tasks, sel, onToggleSel, onToggleAll, onView, onDelete, inte
         </div>
         <div className="grow" />
         {selCount > 0 && (
-          <button className="btn btn-danger btn-sm fadein" onClick={onDelete}>
-            <Icon name="trash" size={13} />删除选中 ({selCount})
-          </button>
+          <React.Fragment>
+            <button className="btn btn-sec btn-sm fadein" disabled={!!exporting}
+              onClick={() => onExport("csv")} title="导出选中任务的商品数据为 CSV">
+              <Icon name={exporting === "csv" ? "refresh" : "download"} size={13}
+                className={exporting === "csv" ? "spin" : ""} />导出 CSV
+            </button>
+            <button className="btn btn-sec btn-sm fadein" disabled={!!exporting}
+              onClick={() => onExport("xlsx")} title="导出选中任务的商品数据为 Excel">
+              <Icon name={exporting === "xlsx" ? "refresh" : "download"} size={13}
+                className={exporting === "xlsx" ? "spin" : ""} />导出 Excel
+            </button>
+            <button className="btn btn-danger btn-sm fadein" onClick={onDelete}>
+              <Icon name="trash" size={13} />删除选中 ({selCount})
+            </button>
+          </React.Fragment>
         )}
         <span style={{ fontSize: 11, fontWeight: 600, color: "var(--ink-3)", display: "flex", alignItems: "center", gap: 5 }}>
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ok)", boxShadow: "0 0 0 3px var(--ok-bg)" }} />
