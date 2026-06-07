@@ -3,7 +3,8 @@
 使用方式：
     python3 run_server.py
     # 或直接用 uvicorn：
-    uvicorn app.api:app --host 0.0.0.0 --port 8900 --reload
+    uvicorn app.api:app --host 0.0.0.0 --port 3000 --reload
+    # 端口由 .env 的 PORT 决定（默认 3000，与 DMIT 一致）
 """
 import logging
 

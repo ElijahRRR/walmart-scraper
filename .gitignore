@@ -5,3 +5,13 @@ proxy_state.json
 data/*.db
 data/*.db-*
 data/backups/
+
+# 卖家后台会话(含登录cookie, 敏感, 勿提交)
+data/seller_session.json
+data/seller_session.json.tmp
+
+# mac 垃圾文件
+.DS_Store
+
+# 不相关的本地工具箱目录(误放在仓库内, 切勿提交到公开仓库)
+沃尔玛/

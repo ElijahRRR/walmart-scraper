@@ -281,3 +281,38 @@ def list_tasks(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
         d["code"] = task_code(d["id"], d.get("created_at"))
         out.append(d)
     return out, total
+
+
+def delete_tasks(task_ids: list[int], vacuum: bool = False) -> dict:
+    """批量删除任务**及其采集数据**（products / product_changes / listings），真正释放空间。
+
+    products/product_changes 的外键是 ON DELETE SET NULL（删任务只会孤立不删数据），
+    故此处显式删除其 task_id 命中的行；listings 是 CASCADE 但也一并显式删，计数清晰。
+    vacuum=True 时执行 VACUUM 收缩数据库文件（会短暂锁库，仅按需用）。
+
+    Returns: {tasks, products, product_changes, listings} 各删除行数。
+    """
+    ids = [int(t) for t in task_ids if str(t).strip()]
+    stats = {"tasks": 0, "products": 0, "product_changes": 0, "listings": 0}
+    if not ids:
+        return stats
+    ph = ",".join("?" * len(ids))
+    with get_conn() as conn:
+        stats["products"] = conn.execute(
+            f"DELETE FROM products WHERE task_id IN ({ph})", ids).rowcount
+        stats["product_changes"] = conn.execute(
+            f"DELETE FROM product_changes WHERE task_id IN ({ph})", ids).rowcount
+        stats["listings"] = conn.execute(
+            f"DELETE FROM listings WHERE task_id IN ({ph})", ids).rowcount
+        stats["tasks"] = conn.execute(
+            f"DELETE FROM tasks WHERE id IN ({ph})", ids).rowcount
+    if vacuum:
+        # VACUUM 不能在事务里执行，单开连接
+        import sqlite3
+        from app.db import _resolve_db_path
+        v = sqlite3.connect(str(_resolve_db_path()))
+        try:
+            v.execute("VACUUM")
+        finally:
+            v.close()
+    return stats

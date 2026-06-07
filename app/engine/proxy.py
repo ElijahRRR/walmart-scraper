@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import random
+import re
 import threading
 import time
 from pathlib import Path
@@ -20,6 +21,18 @@ from pathlib import Path
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+class ProxyExtractError(RuntimeError):
+    """代理提取接口返回了非法内容（如账户停用/限额/格式异常）。
+    单独成类，便于上层区分"提取失败"与"请求被封"。"""
+
+
+_IP_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+
+
+def _looks_like_ip(s: str) -> bool:
+    return bool(_IP_RE.match(s)) and all(0 <= int(o) <= 255 for o in s.split("."))
 
 # proxy_state.json 默认存到项目根目录（app/engine/ 上两层）
 # 多 lane 场景下由 ProxyPool.__init__ 按 lane_id 区分文件名（P2-7）
@@ -111,7 +124,16 @@ class ProxyPool:
     def _extract(self) -> str:
         api_url = _build_proxy_api(self._api_key)
         line = requests.get(api_url, timeout=20).text.strip()
-        ip, port, user, pwd = line.split(":")
+        # 校验返回确实是 ip:port:user:pwd。cliproxy 异常时（账户停用/限额/欠费）
+        # 会返回 JSON 错误体，如 {"code":2,"msg":"Account deactivated"}；该串恰好含 3 个冒号，
+        # 旧代码 `line.split(":")` 盲拆 4 段会拼出假代理（http://{},"msg":...@{"code":...），
+        # 导致后续请求全是 SSLError/ProxyError，真实原因被掩盖。此处显式校验并抛清晰错误。
+        parts = line.split(":")
+        if line.startswith("{") or len(parts) != 4 or not _looks_like_ip(parts[0]) or not parts[1].isdigit():
+            raise ProxyExtractError(
+                "代理提取接口返回异常（期望 ip:port:user:pwd）：%s" % (line[:200] or "(空响应)")
+            )
+        ip, port, user, pwd = parts
         self._extractions += 1
         logger.info("提取新 IP（本次运行第 %d 个）: %s:%s", self._extractions, ip, port)
         # 通知回调（记 proxy_log/total_ip_used）；回调异常不影响采集

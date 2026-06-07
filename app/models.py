@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS products (
     -- 标识
     upc             TEXT,
     gtin13          TEXT,
+    -- 卖家后台权威 GTIN 对账元数据 JSON: {public, public_upc, variants[], mismatch, source}
+    gtin_meta       TEXT,
     -- 图片
     image_url       TEXT,
     images          TEXT,                        -- JSON 数组
@@ -238,6 +240,7 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
         "long_description":       "TEXT",
         "long_description_text":  "TEXT",
         "product_details":        "TEXT",
+        "gtin_meta":              "TEXT",
     },
     "metrics": {
         # M6 指标：累计 IP 数

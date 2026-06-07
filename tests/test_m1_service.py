@@ -451,7 +451,7 @@ class TestRunFlows(unittest.TestCase):
             "14469755459": self.parser.parse_product(SHARK_HTML),
         }
 
-        def _fake_collect_detail(product_id, url=None, with_all_sellers=False):
+        def _fake_collect_detail(product_id, url=None, with_all_sellers=False, **kw):
             return results.get(product_id, {"_status": "give_up", "product_id": product_id})
 
         mock = MagicMock()

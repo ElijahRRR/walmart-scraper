@@ -119,3 +119,28 @@
 - 验证：85 项测试（M1 27 + M2 28 + M3 30）全过；test_parser.py 31 项无回归；全程无真实网络请求
 - Issues：无
 - Next：M4 #19-22（断点续采/失败重试/变动检测/webhook）
+
+### Session 6 — 权威 GTIN 通道 + 采集优化 + 会话上报（2026-06-07）
+源起：对照逆向得到的「沃尔玛工具箱」，发现自家采集在 UPC/GTIN 完整性/准确性、翻页、速度上的差距，逐项补齐。
+
+- **解析器 UPC/GTIN（改进1）**：`parser._fill_identifiers` 重写——优先取公开页**原生 `gtin13`**（旧版误判无此字段、只从 UPC 派生 → marketplace 商品大量漏取），键扩展 gtin13/gtin14/gtin/upc/ean，受控深搜跳过 variantsMap/secondaryOffers 防张冠李戴，upc↔gtin13 双向互填。test_parser.py 第5节 7 断言。
+- **翻页优化**：`collector._paged_listing` 改「连续 EMPTY_PAGE_TOLERANCE=2 页无新增」才停 + maxPage 收紧（关键词/卖家全店共用，均生效）。
+- **并发详情**：`WalmartCollector(detail_workers=N)`，N>1 走 `_collect_details_concurrent`（共用粘性 IP 不耗额外 IP）+ `_AdaptiveThrottle` 失败率自适应限流；N=1 保持原串行。
+- **Yahoo 发现通道**：`collect_ids_via_yahoo` / `collect_by_keyword_yahoo` 用 `site:walmart.com/ip/` 绕沃尔玛搜索 25 页硬上限。
+- **卖家后台权威 GTIN（改进3）**：`engine/isbm_client.py` 直连 `GET /aurora/v1/items/isbm-search-by-id`（登录态会话 + **账号专属代理** require_proxy 防关联），返回目录权威 gtin + 全变体 + BuyBox 价；`engine/seller_gtin.py`（BitBrowser CDP 兜底）；`service/gtin_enrich.py` 采集后批量对账回填（gtin13=后台权威，gtin_meta JSON 存公开值/变体/mismatch）。
+- **开关接入**：`backend_gtin`（默认关）贯穿 3 个 collect 端点 + `/collect/import` + Web UI 三个 tab 复选框；runner run_ids/keyword/seller 完成后批量 enrich。
+- **会话上报闭环**：本地 `scripts/upload_session.py`（开 BitBrowser 导出 cookie+xsrf+账号代理 → POST 上传）；服务端 `POST /seller-session`（0600 落盘）+ `GET /seller-session/status?check=1`（实打 isbm 验活）。config 新增 `SELLER_SESSION_FILE`；DB 新增 `gtin_meta` 列（自动迁移）；data/seller_session.json 已 .gitignore。
+- **端口统一**：本机 + DMIT 统一 3000（.env PORT=3000，config 默认 3000，README/run_server 同步）。
+- **真机验证**：10699516058 公开页错变体码 0693479990653 → 对账后权威 6432341052907；Yahoo 2 页 14 ID；并发4 采 9 详情 ~9s 且 0 额外提 IP；本地上传会话→status check=1 alive=true；HTTP 导入 backend_gtin=true 端到端回填成功。
+- 文档：新增 `GTIN_UPC_采集对比与改进.md`、`翻页采集对比与优化.md`，README 增〔卖家后台权威 GTIN〕〔采集优化〕两节。
+- 测试：全套 256 通过（新增 test_isbm/test_gtin_enrich/test_seller_session_api/test_pagination_yahoo），零回归。
+- 诚实遗留：DMIT 端尚未部署（无访问权限，仅本机验证）；会话有效期待观察后定 cron 间隔；Nuxt 前端与 API 现都默认 3000，生产需各自分端口/反代。
+
+### Session 7 — 服务并发 + 权威 UPC + 任务批量删除 + 端口统一（2026-06-07）
+- **端口统一 3000**：本机 .env + config 默认 + run_server/README 全部 8900→3000，与 DMIT 对齐。
+- **服务层并发（默认开）**：发现 `detail_workers` 只在 collector 生效、runner 有自己的串行循环 → 服务恒串行。新增 `config.DETAIL_WORKERS`（默认 4）+ runner `_iter_collected()`（分批 ThreadPoolExecutor 并发 collect_detail(pace=False) + `_AdaptiveThrottle` 失败率自适应抖动，DB 写仍主线程串行避免 SQLite 锁），接入 run_ids 与 _process_listing。`_collect_with_retry` 加 pace 参数。实测 DMIT 9 个 id 12s 完成。
+- **次级 id 漏补 GTIN 修复**：enrich 改用「实际入库的规范 product_id」（saved_ids）而非输入请求 id —— `20034724854`（次级 id）入库为规范 `17063105514`，旧版按请求 id 搜 isbm 搜不到。`_process_listing` 返回值改 3 元组（+saved_ids）。
+- **后台原生 UPC 修复**：isbm 响应 `conditions.New` 本就有原生 `upc` 字段（多为 GTIN 去前导零，EAN 也给），旧版只读 gtin 用 split_gtin 派生（EAN→None）漏填。改为 `_digits(c.get("upc"))` 原生优先。实测 DMIT 9/9 有 gtin13 + 9/9 有 upc。
+- **任务批量删除**：`tasks.delete_tasks(task_ids, vacuum=False)` 级联删 products/product_changes/listings（外键 SET NULL 不自动删故显式删）；`POST /tasks/delete`；前端任务列表复选框 + 全选 + 「删除选中(N)」按钮 + 确认弹窗 + 自动刷新保留勾选。解决任务列表 + DB 膨胀。
+- **公开仓库安全加固**：BitBrowser Local API Token 从 isbm_client/seller_gtin/upload_session/test 的硬编码挪到 `BIT_API_KEY` 环境变量（默认空），真值入本机 .env（gitignore）；.env.example 补 DETAIL_WORKERS/SELLER_SESSION_FILE/BIT_API_KEY/PORT=3000。提交前全量 secret 扫描通过。
+- 测试：全套 261 通过（新增 isbm/gtin_enrich/seller_session/pagination_yahoo/task_delete）。已部署 DMIT 验证。

@@ -13,7 +13,9 @@
 关键坑（已规避）：
   1. 运费/到货时间在 product.shippingOption，**不是** priceInfo.shipPrice（恒 null）。
   2. null 不等于免邮：有 shippingOption 节点但无 shipPrice 才是免邮。
-  3. GTIN13 沃尔玛无原生字段，由 12 位 UPC 补前导零派生。
+  3. GTIN13 沃尔玛页面 JSON 多数自带原生 "gtin13" 字段（product/idml），优先取原生；
+     仅当原生缺失时才由 UPC 补前导零派生（旧版误以为无原生字段、只从 UPC 派生，
+     导致"有 gtin13 无 upc"的 marketplace 商品全漏）。
   4. Rating/Reviews 为 null 表示新品无评价，不是解析失败。
 """
 import re
@@ -85,7 +87,7 @@ class WalmartParser:
             self._fill_shipping(result, product)
             self._fill_fulfillment(result, product)
             self._fill_rating(result, product)
-            self._fill_identifiers(result, product)
+            self._fill_identifiers(result, product, idml)
             self._fill_images(result, product)
             self._fill_descriptions(result, idml)
         except Exception as exc:  # 防御：任何意外都降级而非崩溃
@@ -257,12 +259,45 @@ class WalmartParser:
         r["reviews"] = reviews
         r["_has_reviews"] = bool(reviews)
 
-    def _fill_identifiers(self, r: Dict[str, Any], p: dict) -> None:
-        upc = p.get("upc")
-        if not upc:  # 兜底深搜
-            upc = _find_first_value(p, "upc")
+    def _fill_identifiers(self, r: Dict[str, Any], p: dict,
+                          idml: Optional[dict] = None) -> None:
+        """UPC / GTIN13 提取——原生 gtin13 优先，UPC 仅作兜底，二者各自独立保留。
+
+        取值顺序（每步都经校验，非法值丢弃）：
+          1. 原生 gtin13：product.gtin13 / idml.gtin13（Walmart 页面 JSON 多数自带）；
+             原生 upc：product.upc / idml.upc。
+          2. idml.specifications 中 name 含 GTIN/EAN/UPC 的条目。
+          3. 受控深搜 product / idml 子树（_scan_identifiers），**跳过 variantsMap /
+             secondaryOffers / conditionOffers / similarItems 等易张冠李戴的子树**——
+             既提召回又不抓到变体/竞品的标识符。
+          4. upc ↔ gtin13 双向互填（仅前导零的 GTIN-13 才反推 UPC-A，真 EAN 不反推）。
+
+        找不到就如实留空（None）。
+        """
+        idml = idml if isinstance(idml, dict) else {}
+        # 1) 原生 gtin13 / upc（product → idml）
+        gtin13 = _valid_gtin(p.get("gtin13")) or _valid_gtin(idml.get("gtin13"))
+        upc = _valid_upc(p.get("upc")) or _valid_upc(idml.get("upc"))
+        # 2) specifications 里的标识符
+        if not (gtin13 and upc):
+            sid = _ids_from_specs(idml.get("specifications"))
+            gtin13 = gtin13 or sid["gtin13"]
+            upc = upc or sid["upc"]
+        # 3) 受控深搜补漏（跳过变体/竞品子树）
+        if not (gtin13 and upc):
+            for node in (p, idml):
+                sub = _scan_identifiers(node)
+                gtin13 = gtin13 or sub["gtin13"]
+                upc = upc or sub["upc"]
+                if gtin13 and upc:
+                    break
+        # 4) 双向互填
+        if gtin13 and not upc:
+            upc = _gtin13_to_upc(gtin13)
+        if upc and not gtin13:
+            gtin13 = _to_gtin13(upc)
         r["upc"] = upc
-        r["gtin13"] = _to_gtin13(upc)
+        r["gtin13"] = gtin13
 
     def _fill_images(self, r: Dict[str, Any], p: dict) -> None:
         img = p.get("imageInfo") or {}
@@ -354,6 +389,111 @@ def _find_first_value(obj: Any, key: str) -> Any:
     """深搜返回第一个 key 对应的非空值。"""
     node = _find_first_with_key(obj, key)
     return node.get(key) if node else None
+
+
+# 原生 GTIN 字段候选键（沃尔玛页面 JSON 里的真实命名）
+_GTIN_KEYS = ("gtin13", "gtin14", "gtin")
+# 这些子树里的 upc/gtin 属于变体/竞品/推荐位的其它商品，深搜时跳过防张冠李戴
+_ID_NOISE_SUBTREES = {
+    "variantsMap", "variants", "secondaryOffers", "conditionOffers",
+    "similarItems", "relatedProducts", "carouselData", "moduleData",
+    "additionalOffers", "sellerOffers", "offers", "recommendations",
+}
+
+
+def _valid_upc(val: Any) -> Optional[str]:
+    """校验并归一 UPC：仅保留数字，长度须为 8/12/13/14
+    （UPC-E / UPC-A / EAN-13 / GTIN-14）；全零或异常长度视为无效返回 None。
+    防止把占位符、SKU、型号等非 UPC 串当成 UPC 落库。"""
+    if val is None:
+        return None
+    digits = re.sub(r"\D", "", str(val))
+    if len(digits) not in (8, 12, 13, 14):
+        return None
+    if set(digits) == {"0"}:
+        return None
+    return digits
+
+
+def _valid_gtin(val: Any) -> Optional[str]:
+    """校验并归一 GTIN（gtin/gtin13/gtin14）：纯数字、长度 8/12/13/14、非全零。
+    长度 <13 的归一到 13 位（补前导零）；≥13 原样保留（13 或 14）。"""
+    if val is None:
+        return None
+    digits = re.sub(r"\D", "", str(val))
+    if len(digits) not in (8, 12, 13, 14):
+        return None
+    if set(digits) == {"0"}:
+        return None
+    return digits if len(digits) >= 13 else digits.zfill(13)
+
+
+def _ids_from_specs(specs: Any) -> Dict[str, Optional[str]]:
+    """从 idml.specifications 同时取 gtin13 与 upc（name 含 GTIN/EAN/UPC）。"""
+    out: Dict[str, Optional[str]] = {"gtin13": None, "upc": None}
+    if not isinstance(specs, list):
+        return out
+    for s in specs:
+        if not isinstance(s, dict):
+            continue
+        name = (s.get("name") or "").lower()
+        v = s.get("value")
+        if ("gtin" in name or "ean" in name) and not out["gtin13"]:
+            g = _valid_gtin(v)
+            if g:
+                out["gtin13"] = g
+        if "upc" in name and not out["upc"]:
+            u = _valid_upc(v)
+            if u:
+                out["upc"] = u
+    return out
+
+
+def _scan_identifiers(node: Any, _depth: int = 0) -> Dict[str, Optional[str]]:
+    """在 product/idml 子树受控深搜 gtin*/upc，跳过变体/竞品子树防张冠李戴。
+
+    限深 6 层、列表只看前 20 项，命中即止。"""
+    found: Dict[str, Optional[str]] = {"gtin13": None, "upc": None}
+    if _depth > 6 or not isinstance(node, (dict, list)):
+        return found
+    if isinstance(node, dict):
+        for gk in _GTIN_KEYS:
+            if not found["gtin13"]:
+                g = _valid_gtin(node.get(gk))
+                if g:
+                    found["gtin13"] = g
+        if not found["upc"]:
+            found["upc"] = _valid_upc(node.get("upc"))
+        for k, v in node.items():
+            if k in _ID_NOISE_SUBTREES:
+                continue
+            if found["gtin13"] and found["upc"]:
+                break
+            sub = _scan_identifiers(v, _depth + 1)
+            found["gtin13"] = found["gtin13"] or sub["gtin13"]
+            found["upc"] = found["upc"] or sub["upc"]
+    else:  # list
+        for v in node[:20]:
+            if found["gtin13"] and found["upc"]:
+                break
+            sub = _scan_identifiers(v, _depth + 1)
+            found["gtin13"] = found["gtin13"] or sub["gtin13"]
+            found["upc"] = found["upc"] or sub["upc"]
+    return found
+
+
+def _gtin13_to_upc(gtin13: Optional[str]) -> Optional[str]:
+    """GTIN-13 → UPC-A：仅前导零的 GTIN-13/14 才有对应 UPC-A；真 EAN-13 返回 None。"""
+    if not gtin13:
+        return None
+    d = re.sub(r"\D", "", str(gtin13))
+    if len(d) == 12:
+        return d
+    if len(d) == 13 and d[0] == "0":
+        return d[1:]
+    if len(d) == 14 and d[:2] == "00":
+        return d[2:]
+    return None
 
 
 def _to_gtin13(upc: Optional[str]) -> Optional[str]:

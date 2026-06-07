@@ -139,6 +139,12 @@
           <textarea id="ids-input" placeholder="每行一个 ID，例如：&#10;1234567890&#10;0987654321"></textarea>
         </div>
         <p style="font-size:12px;color:#888;margin-bottom:12px;">ℹ️ 按 ID 采集直接抓取商品完整详情（无需二段式）。</p>
+        <div class="field">
+          <label class="cb-label">
+            <input type="checkbox" id="ids-backend-gtin" />
+            从沃尔玛后台查 UPC/GTIN（权威更准，较慢，默认关）
+          </label>
+        </div>
         <button class="btn btn-primary" id="btn-submit-ids">提交采集</button>
         <div class="field import-box">
           <label class="field-label">或 从文件导入（txt / csv / xlsx，每行/每列一个 ID → 合并为一个任务）</label>
@@ -172,6 +178,10 @@
             <input type="checkbox" id="kw-detail" checked />
             采详情（二段式）
           </label>
+          <label class="cb-label">
+            <input type="checkbox" id="kw-backend-gtin" />
+            从沃尔玛后台查 UPC/GTIN（权威更准，较慢，默认关）
+          </label>
         </div>
         <button class="btn btn-primary" id="btn-submit-keyword">提交采集</button>
         <div class="field import-box">
@@ -198,6 +208,10 @@
             <input type="checkbox" id="sel-detail" checked />
             采详情（二段式）
           </label>
+          <label class="cb-label">
+            <input type="checkbox" id="sel-backend-gtin" />
+            从沃尔玛后台查 UPC/GTIN（权威更准，较慢，默认关）
+          </label>
         </div>
         <button class="btn btn-primary" id="btn-submit-seller">提交采集</button>
         <div class="field import-box">
@@ -220,6 +234,8 @@
     <div class="card-body">
       <div id="taskRefreshBar">
         <button class="btn btn-primary btn-sm" id="btn-refresh-tasks">刷新</button>
+        <button class="btn btn-sm" id="btn-delete-tasks"
+                style="background:#c0392b;color:#fff" disabled>删除选中 (0)</button>
         <label>自动刷新：
           <select id="auto-refresh-interval">
             <option value="0">关闭</option>
@@ -228,16 +244,18 @@
             <option value="30000">30 秒</option>
           </select>
         </label>
+        <span id="task-del-msg" style="font-size:12px;margin-left:8px"></span>
       </div>
       <div class="table-wrap">
         <table id="tasks-table">
           <thead>
             <tr>
+              <th style="width:32px"><input type="checkbox" id="task-select-all" title="全选本页"></th>
               <th>ID</th><th>类型</th><th>状态</th><th>进度</th><th>结果</th><th>创建时间</th><th>操作</th>
             </tr>
           </thead>
           <tbody id="tasks-tbody">
-            <tr><td colspan="7" style="text-align:center;color:#aaa">点击「刷新」加载任务列表</td></tr>
+            <tr><td colspan="8" style="text-align:center;color:#aaa">点击「刷新」加载任务列表</td></tr>
           </tbody>
         </table>
       </div>
@@ -375,9 +393,10 @@ document.getElementById('btn-submit-ids').addEventListener('click', async () => 
   const raw = document.getElementById('ids-input').value.trim();
   const ids = raw.split('\n').map(s => s.trim()).filter(Boolean);
   if (!ids.length) { showMsg('submit-msg', 'ID 列表不能为空', 'error'); return; }
+  const backend_gtin = document.getElementById('ids-backend-gtin').checked;
   const resp = await apiFetch('/collect/ids', {
     method: 'POST',
-    body: JSON.stringify({ ids }),  // ID 采集本就是采详情，不需 with_detail
+    body: JSON.stringify({ ids, backend_gtin }),  // ID 采集本就是采详情，不需 with_detail
   });
   const data = await resp.json();
   if (resp.ok) {
@@ -394,7 +413,8 @@ document.getElementById('btn-submit-keyword').addEventListener('click', async ()
   const minRaw = document.getElementById('kw-min-price').value;
   const maxRaw = document.getElementById('kw-max-price').value;
   const with_detail = document.getElementById('kw-detail').checked;
-  const body = { keyword, max_pages, with_detail };
+  const backend_gtin = document.getElementById('kw-backend-gtin').checked;
+  const body = { keyword, max_pages, with_detail, backend_gtin };
   if (minRaw !== '') body.min_price = parseFloat(minRaw);
   if (maxRaw !== '') body.max_price = parseFloat(maxRaw);
   const resp = await apiFetch('/collect/keyword', { method: 'POST', body: JSON.stringify(body) });
@@ -411,7 +431,8 @@ document.getElementById('btn-submit-seller').addEventListener('click', async () 
   if (!seller_id) { showMsg('submit-msg', '卖家 ID 不能为空', 'error'); return; }
   const max_pages = parseInt(document.getElementById('sel-max-pages').value) || 10;
   const with_detail = document.getElementById('sel-detail').checked;
-  const resp = await apiFetch('/collect/seller', { method: 'POST', body: JSON.stringify({ seller_id, max_pages, with_detail }) });
+  const backend_gtin = document.getElementById('sel-backend-gtin').checked;
+  const resp = await apiFetch('/collect/seller', { method: 'POST', body: JSON.stringify({ seller_id, max_pages, with_detail, backend_gtin }) });
   const data = await resp.json();
   if (resp.ok) {
     showMsg('submit-msg', `✓ 任务已提交，task_id = ${data.task_id}`, 'ok');
@@ -434,6 +455,7 @@ async function importFile(type, fileInputId, extra) {
   if (extra.max_pages != null) fd.append('max_pages', extra.max_pages);
   if (extra.min_price != null && extra.min_price !== '') fd.append('min_price', extra.min_price);
   if (extra.max_price != null && extra.max_price !== '') fd.append('max_price', extra.max_price);
+  if (extra.backend_gtin !== undefined) fd.append('backend_gtin', extra.backend_gtin ? 'true' : 'false');
   // 注意：FormData 不要手动设 Content-Type，浏览器会自动带 multipart boundary
   const resp = await fetch('/collect/import', { method: 'POST', headers: { 'X-API-Key': apiKey() }, body: fd });
   const data = await resp.json();
@@ -447,7 +469,9 @@ async function importFile(type, fileInputId, extra) {
 }
 
 document.getElementById('btn-import-ids').addEventListener('click', () =>
-  importFile('ids', 'ids-file', {}));  // ID 采集即采详情，无需 with_detail
+  importFile('ids', 'ids-file', {
+    backend_gtin: document.getElementById('ids-backend-gtin').checked,
+  }));  // ID 采集即采详情，无需 with_detail
 
 document.getElementById('btn-import-keyword').addEventListener('click', () =>
   importFile('keyword', 'kw-file', {
@@ -455,12 +479,14 @@ document.getElementById('btn-import-keyword').addEventListener('click', () =>
     max_pages: parseInt(document.getElementById('kw-max-pages').value) || 25,
     min_price: document.getElementById('kw-min-price').value,
     max_price: document.getElementById('kw-max-price').value,
+    backend_gtin: document.getElementById('kw-backend-gtin').checked,
   }));
 
 document.getElementById('btn-import-seller').addEventListener('click', () =>
   importFile('seller', 'sel-file', {
     with_detail: document.getElementById('sel-detail').checked,
     max_pages: parseInt(document.getElementById('sel-max-pages').value) || 10,
+    backend_gtin: document.getElementById('sel-backend-gtin').checked,
   }));
 
 // ── 任务列表 ──────────────────────────────────────────────────────────────────
@@ -483,15 +509,19 @@ async function loadTasks() {
 function renderTasks(items) {
   const tbody = document.getElementById('tasks-tbody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa">暂无任务</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#aaa">暂无任务</td></tr>';
+    updateDeleteBtn();
     return;
   }
+  // 保留自动刷新前已勾选的项（避免 3s 重渲染清空选择）
+  const prevChecked = new Set(_checkedTaskIds());
   tbody.innerHTML = items.map(t => {
     const pct = t.total > 0 ? Math.round(t.progress / t.total * 100) : 0;
     const progressHtml = t.total > 0
       ? `<progress value="${t.progress}" max="${t.total}"></progress> ${pct}%`
       : '—';
     return `<tr>
+      <td><input type="checkbox" class="task-cb" value="${t.id}" ${prevChecked.has(t.id) ? 'checked' : ''}></td>
       <td>${t.id}</td>
       <td>${t.type}</td>
       <td><span class="badge badge-${t.status}">${t.status}</span></td>
@@ -501,7 +531,51 @@ function renderTasks(items) {
       <td><button class="btn btn-sm btn-primary" onclick="viewResult(${t.id})">查看结果</button></td>
     </tr>`;
   }).join('');
+  // 行内复选框联动删除按钮；自动刷新会重渲染，故重置全选框
+  const sa = document.getElementById('task-select-all');
+  if (sa) sa.checked = false;
+  tbody.querySelectorAll('.task-cb').forEach(cb =>
+    cb.addEventListener('change', updateDeleteBtn));
+  updateDeleteBtn();
 }
+
+function _checkedTaskIds() {
+  return [...document.querySelectorAll('.task-cb:checked')].map(cb => parseInt(cb.value));
+}
+
+function updateDeleteBtn() {
+  const n = _checkedTaskIds().length;
+  const btn = document.getElementById('btn-delete-tasks');
+  if (!btn) return;
+  btn.textContent = `删除选中 (${n})`;
+  btn.disabled = n === 0;
+}
+
+document.getElementById('task-select-all').addEventListener('change', function() {
+  document.querySelectorAll('.task-cb').forEach(cb => { cb.checked = this.checked; });
+  updateDeleteBtn();
+});
+
+document.getElementById('btn-delete-tasks').addEventListener('click', async () => {
+  const ids = _checkedTaskIds();
+  if (!ids.length) return;
+  if (!confirm(`确认删除 ${ids.length} 个任务？\n将同时删除这些任务采集到的商品/列表数据，不可恢复。`)) return;
+  const msg = document.getElementById('task-del-msg');
+  msg.textContent = '删除中…'; msg.style.color = '#888';
+  const resp = await apiFetch('/tasks/delete', {
+    method: 'POST', body: JSON.stringify({ task_ids: ids }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (resp.ok) {
+    const d = data.deleted || {};
+    msg.textContent = `✓ 删除任务 ${d.tasks}，商品 ${d.products}，列表 ${d.listings}`;
+    msg.style.color = '#2e7d32';
+  } else {
+    msg.textContent = `删除失败（${resp.status}）：${data.detail || JSON.stringify(data)}`;
+    msg.style.color = '#c0392b';
+  }
+  loadTasks();
+});
 
 document.getElementById('btn-refresh-tasks').addEventListener('click', loadTasks);
 

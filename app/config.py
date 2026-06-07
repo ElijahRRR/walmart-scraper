@@ -73,12 +73,23 @@ def _get_float(key: str, default: float) -> float:
 PROXY_API_KEY: str = _get("PROXY_API_KEY", "")
 """cliproxy 提取 key，空字符串表示未配置（测试/本地可不填）"""
 
+# ── 卖家后台权威 GTIN（isbm）会话 ───────────────────────────────────────────
+SELLER_SESSION_FILE: str = _get("SELLER_SESSION_FILE", str(_ROOT / "data" / "seller_session.json"))
+"""会话 json 落盘路径（含 cookie/xsrf/账号代理）。由本地 upload_session 脚本经
+POST /seller-session 写入；文件不存在=会话未就绪，'从后台查GTIN'开关即便打开也优雅跳过。"""
+
 # ── 采集节奏（秒） ──────────────────────────────────────────────────────────
 PACE_MIN: float = _get_float("PACE_MIN", 3.0)
 """最短请求间隔（秒）"""
 
 PACE_MAX: float = _get_float("PACE_MAX", 7.0)
 """最长请求间隔（秒）"""
+
+# ── 详情并发 ─────────────────────────────────────────────────────────────────
+DETAIL_WORKERS: int = _get_int("DETAIL_WORKERS", 4)
+"""单 Lane 内并发采详情的线程数（共用该 Lane 的粘性 IP，不额外提 IP）。
+>1 时不走 pace 全局 3-7s 串行间隔，改由失败率自适应抖动限流；1=退回原串行。
+单 IP 上并发越高越快也越易被封，默认 4，可按 IP 质量在 .env 调。"""
 
 # ── Lane 并发设置 ────────────────────────────────────────────────────────────
 LANES: int = _get_int("LANES", 1)
@@ -114,7 +125,7 @@ elif API_KEY == _DEFAULT_API_KEY:
     )
 
 # ── 服务设置 ─────────────────────────────────────────────────────────────────
-PORT: int = _get_int("PORT", 8900)
+PORT: int = _get_int("PORT", 3000)
 """HTTP 服务端口"""
 
 DB_PATH: str = _get("DB_PATH", "data/walmart.db")

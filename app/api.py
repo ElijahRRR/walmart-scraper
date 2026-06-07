@@ -20,6 +20,7 @@
 import hmac
 import logging
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
@@ -34,7 +35,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app import config
 from app.db import init_db, get_conn
-from app.service.tasks import create_task, get_task, list_tasks
+from app.service.tasks import create_task, get_task, list_tasks, delete_tasks
 from app.service.lanes import get_lane_pool
 from app.service.importer import parse_upload
 
@@ -129,6 +130,7 @@ def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> str:
 class CollectIdsRequest(BaseModel):
     ids: list[str] = Field(..., min_length=1, description="商品 ID 列表（usItemId）")
     with_detail: bool = Field(True, description="是否采详情（二段式）")
+    backend_gtin: bool = Field(False, description="从沃尔玛后台查权威 UPC/GTIN（更准/较慢，默认关）")
 
     @field_validator("ids")
     @classmethod
@@ -144,12 +146,14 @@ class CollectKeywordRequest(BaseModel):
     min_price: Optional[float] = Field(None, ge=0, description="价格下限（可选）")
     max_price: Optional[float] = Field(None, ge=0, description="价格上限（可选）")
     with_detail: bool = Field(True, description="是否二段式采详情")
+    backend_gtin: bool = Field(False, description="从沃尔玛后台查权威 UPC/GTIN（更准/较慢，默认关）")
 
 
 class CollectSellerRequest(BaseModel):
     seller_id: str = Field(..., min_length=1, description="卖家 ID")
     max_pages: int = Field(30, ge=1, description="最多翻页数")
     with_detail: bool = Field(True, description="是否二段式采详情")
+    backend_gtin: bool = Field(False, description="从沃尔玛后台查权威 UPC/GTIN（更准/较慢，默认关）")
 
 
 class ProxyRotateRequest(BaseModel):
@@ -160,31 +164,34 @@ class ProxyRotateRequest(BaseModel):
 # 后台任务执行（在 BackgroundTasks 中运行 runner.*）
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _bg_run_ids(ids: list[str], with_detail: bool, task_id: Optional[int] = None) -> None:
+def _bg_run_ids(ids: list[str], with_detail: bool, task_id: Optional[int] = None,
+                backend_gtin: bool = False) -> None:
     """在后台线程执行 ID 采集（不阻塞 HTTP 响应）。复用 API 已建的 task_id。"""
     from app.service.runner import run_ids
     try:
-        run_ids(ids, with_detail=with_detail, task_id=task_id)
+        run_ids(ids, with_detail=with_detail, task_id=task_id, backend_gtin=backend_gtin)
     except Exception as exc:
         logger.exception("_bg_run_ids 异常: %s", exc)
 
 
 def _bg_run_keyword(keyword: str, max_pages: int, with_detail: bool,
                     min_price: Optional[float], max_price: Optional[float],
-                    task_id: Optional[int] = None) -> None:
+                    task_id: Optional[int] = None, backend_gtin: bool = False) -> None:
     from app.service.runner import run_keyword
     try:
         run_keyword(keyword, max_pages=max_pages, with_detail=with_detail,
-                    min_price=min_price, max_price=max_price, task_id=task_id)
+                    min_price=min_price, max_price=max_price, task_id=task_id,
+                    backend_gtin=backend_gtin)
     except Exception as exc:
         logger.exception("_bg_run_keyword 异常: %s", exc)
 
 
 def _bg_run_seller(seller_id: str, max_pages: int, with_detail: bool,
-                   task_id: Optional[int] = None) -> None:
+                   task_id: Optional[int] = None, backend_gtin: bool = False) -> None:
     from app.service.runner import run_seller
     try:
-        run_seller(seller_id, max_pages=max_pages, with_detail=with_detail, task_id=task_id)
+        run_seller(seller_id, max_pages=max_pages, with_detail=with_detail,
+                   task_id=task_id, backend_gtin=backend_gtin)
     except Exception as exc:
         logger.exception("_bg_run_seller 异常: %s", exc)
 
@@ -222,8 +229,10 @@ def submit_ids(body: CollectIdsRequest,
                _key: str = Depends(require_api_key)):
     """提交 ID 列表采集任务，立即返回 task_id，后台执行。"""
     # 先建任务记录（状态=pending），再在后台执行
-    task_id = create_task("detail", {"ids": body.ids, "with_detail": body.with_detail})
-    background_tasks.add_task(_bg_run_ids, body.ids, body.with_detail, task_id)
+    task_id = create_task("detail", {"ids": body.ids, "with_detail": body.with_detail,
+                                     "backend_gtin": body.backend_gtin})
+    background_tasks.add_task(_bg_run_ids, body.ids, body.with_detail, task_id,
+                             body.backend_gtin)
     logger.info("submit_ids task_id=%d ids=%d", task_id, len(body.ids))
     return {"task_id": task_id, "status": "pending"}
 
@@ -237,6 +246,7 @@ def submit_keyword(body: CollectKeywordRequest,
         "keyword": body.keyword,
         "max_pages": body.max_pages,
         "with_detail": body.with_detail,
+        "backend_gtin": body.backend_gtin,
     }
     if body.min_price is not None:
         params["min_price"] = body.min_price
@@ -246,7 +256,7 @@ def submit_keyword(body: CollectKeywordRequest,
     task_id = create_task("keyword", params)
     background_tasks.add_task(
         _bg_run_keyword, body.keyword, body.max_pages, body.with_detail,
-        body.min_price, body.max_price, task_id,
+        body.min_price, body.max_price, task_id, body.backend_gtin,
     )
     logger.info("submit_keyword task_id=%d keyword=%r", task_id, body.keyword)
     return {"task_id": task_id, "status": "pending"}
@@ -261,9 +271,11 @@ def submit_seller(body: CollectSellerRequest,
         "seller_id": body.seller_id,
         "max_pages": body.max_pages,
         "with_detail": body.with_detail,
+        "backend_gtin": body.backend_gtin,
     })
     background_tasks.add_task(
         _bg_run_seller, body.seller_id, body.max_pages, body.with_detail, task_id,
+        body.backend_gtin,
     )
     logger.info("submit_seller task_id=%d seller_id=%s", task_id, body.seller_id)
     return {"task_id": task_id, "status": "pending"}
@@ -282,6 +294,7 @@ async def collect_import(
     max_pages: int = Form(25),
     min_price: Optional[float] = Form(None),
     max_price: Optional[float] = Form(None),
+    backend_gtin: bool = Form(False, description="从沃尔玛后台查权威 UPC/GTIN（默认关）"),
     _key: str = Depends(require_api_key),
 ):
     """上传文件批量提交采集任务。
@@ -314,30 +327,112 @@ async def collect_import(
     task_ids: list[int] = []
     if type == "ids":
         tid = create_task("detail", {"ids": tokens, "with_detail": with_detail,
-                                     "source": file.filename})
-        background_tasks.add_task(_bg_run_ids, tokens, with_detail, tid)
+                                     "backend_gtin": backend_gtin, "source": file.filename})
+        background_tasks.add_task(_bg_run_ids, tokens, with_detail, tid, backend_gtin)
         task_ids.append(tid)
     elif type == "keyword":
         for kw in tokens:
             params: dict[str, Any] = {"keyword": kw, "max_pages": max_pages,
-                                      "with_detail": with_detail, "source": file.filename}
+                                      "with_detail": with_detail,
+                                      "backend_gtin": backend_gtin, "source": file.filename}
             if min_price is not None:
                 params["min_price"] = min_price
             if max_price is not None:
                 params["max_price"] = max_price
             tid = create_task("keyword", params)
             background_tasks.add_task(_bg_run_keyword, kw, max_pages, with_detail,
-                                      min_price, max_price, tid)
+                                      min_price, max_price, tid, backend_gtin)
             task_ids.append(tid)
     else:  # seller
         for sid in tokens:
             tid = create_task("seller", {"seller_id": sid, "max_pages": max_pages,
-                                         "with_detail": with_detail, "source": file.filename})
-            background_tasks.add_task(_bg_run_seller, sid, max_pages, with_detail, tid)
+                                         "with_detail": with_detail,
+                                         "backend_gtin": backend_gtin, "source": file.filename})
+            background_tasks.add_task(_bg_run_seller, sid, max_pages, with_detail, tid,
+                                      backend_gtin)
             task_ids.append(tid)
 
     logger.info("collect_import type=%s 解析=%d 建任务=%d", type, len(tokens), len(task_ids))
     return {"type": type, "parsed": len(tokens), "created": len(task_ids), "task_ids": task_ids}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 卖家后台会话上报端点（本地 upload_session 脚本 → DMIT）
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SellerSessionRequest(BaseModel):
+    headers: dict[str, str] = Field(..., description="会话请求头（含 cookie / x-xsrf-token / wm_*）")
+    proxy: Optional[dict] = Field(None, description="账号专属代理 {type,host,port,user,pass}")
+    browser_id: Optional[str] = Field(None, description="BitBrowser 窗口 ID")
+    captured_at: Optional[int] = Field(None, description="本地导出时的 Unix 时间戳")
+
+
+def _seller_session_path():
+    from pathlib import Path
+    from app import config
+    return Path(config.SELLER_SESSION_FILE)
+
+
+@app.post("/seller-session", tags=["seller-session"])
+def upload_seller_session(body: SellerSessionRequest, _key: str = Depends(require_api_key)):
+    """接收本地上报的卖家后台会话，落盘到 config.SELLER_SESSION_FILE（0600）。
+
+    供'从后台查 UPC/GTIN'对账使用。会话含登录 cookie，按敏感数据处理。
+    """
+    h = {k.lower(): v for k, v in (body.headers or {}).items()}
+    if "cookie" not in h or "x-xsrf-token" not in h:
+        raise HTTPException(status_code=400, detail="会话缺少 cookie 或 x-xsrf-token，无效")
+
+    import json as _json
+    import os as _os
+    path = _seller_session_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"headers": body.headers, "proxy": body.proxy,
+               "browser_id": body.browser_id, "captured_at": body.captured_at or int(time.time())}
+    # 原子写 + 收紧权限（仅属主可读写）
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(_json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        _os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    _os.replace(tmp, path)
+    logger.info("seller-session 已更新 browser_id=%s cookie_len=%d proxy=%s",
+                body.browser_id, len(h.get("cookie", "")), bool(body.proxy))
+    return {"ok": True, "saved": str(path), "captured_at": payload["captured_at"],
+            "cookie_len": len(h.get("cookie", "")), "has_proxy": bool(body.proxy)}
+
+
+@app.get("/seller-session/status", tags=["seller-session"])
+def seller_session_status(check: bool = Query(False, description="是否发一次 isbm 探测会话是否仍有效"),
+                          _key: str = Depends(require_api_key)):
+    """查看会话状态：是否存在、导出至今多久；check=1 时实打一次 isbm 验活（观察时效用）。"""
+    import json as _json
+    path = _seller_session_path()
+    if not path.exists():
+        return {"exists": False, "path": str(path)}
+    try:
+        sess = _json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"exists": True, "path": str(path), "valid_json": False, "error": str(exc)}
+    cap = sess.get("captured_at") or 0
+    age_min = round((time.time() - cap) / 60, 1) if cap else None
+    out = {"exists": True, "path": str(path), "captured_at": cap, "age_min": age_min,
+           "has_proxy": bool(sess.get("proxy")), "browser_id": sess.get("browser_id")}
+    if check:
+        try:
+            from app.engine.isbm_client import IsbmClient, SessionExpired
+            cli = IsbmClient(sess, group_size=1)
+            try:
+                hit = cli.fetch(["42379869"])   # 稳定探针商品
+                out["alive"] = bool(hit)
+            except SessionExpired as exc:
+                out["alive"] = False
+                out["detail"] = str(exc)
+        except Exception as exc:
+            out["alive"] = None
+            out["detail"] = f"探测异常: {exc}"
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -362,6 +457,22 @@ def get_task_api(task_id: int, _key: str = Depends(require_api_key)):
     if task is None:
         raise HTTPException(status_code=404, detail=f"task {task_id} not found")
     return task
+
+
+class DeleteTasksRequest(BaseModel):
+    task_ids: list[int] = Field(..., min_length=1, description="要删除的任务 ID 列表")
+    vacuum: bool = Field(False, description="删除后 VACUUM 收缩数据库文件（会短暂锁库）")
+
+
+@app.post("/tasks/delete", tags=["tasks"])
+def delete_tasks_api(body: DeleteTasksRequest, _key: str = Depends(require_api_key)):
+    """批量删除任务**及其采集数据**（products/listings/product_changes），释放空间。
+
+    ⚠️ 不可恢复：会删掉这些任务采集到的商品数据。
+    """
+    stats = delete_tasks(body.task_ids, vacuum=body.vacuum)
+    logger.info("delete_tasks ids=%s → %s", body.task_ids, stats)
+    return {"ok": True, "deleted": stats}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

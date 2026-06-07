@@ -19,6 +19,7 @@ M4 新增能力：
 """
 import json
 import logging
+import time
 from typing import Any, Iterable, Optional
 
 from app.db import get_conn, bump_metric
@@ -463,7 +464,8 @@ def _maybe_fire_webhook(task_id: int, webhook_url: Optional[str] = None) -> None
 # 失败重试辅助（M4）
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _collect_with_retry(collector, product_id: str, url: Optional[str] = None) -> dict:
+def _collect_with_retry(collector, product_id: str, url: Optional[str] = None,
+                        pace: bool = True) -> dict:
     """带重试地采集单个商品详情。
 
     规则：
@@ -480,7 +482,7 @@ def _collect_with_retry(collector, product_id: str, url: Optional[str] = None) -
     last_exc: Optional[Exception] = None
     for attempt in range(RETRY_MAX + 1):
         try:
-            r = collector.collect_detail(product_id, url)
+            r = collector.collect_detail(product_id, url, pace=pace)
         except Exception as exc:
             last_exc = exc
             logger.warning(
@@ -533,6 +535,40 @@ def _collect_with_retry(collector, product_id: str, url: Optional[str] = None) -
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 详情采集（串行 / 并发）—— 网络并发，DB 写入仍在主线程串行（避免 SQLite 锁）
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _iter_collected(collector, items, workers, throttle):
+    """按顺序产出 (idx, item, result)。
+
+    items: [{"product_id":..., "url":...}, ...]
+    workers<=1：逐个串行（走 pace）。workers>1：每 workers 个一批并发取(pace=False)+
+    自适应抖动限流，DB 写入由调用方在主线程串行处理（本函数只做网络采集）。
+    """
+    if workers <= 1:
+        for idx, it in enumerate(items):
+            yield idx, it, _collect_with_retry(collector, it["product_id"], it.get("url"))
+        return
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(it):
+        if throttle is not None:
+            time.sleep(throttle.jitter())   # 失败率高时自动拉大间隔
+        r = _collect_with_retry(collector, it["product_id"], it.get("url"), pace=False)
+        if throttle is not None:
+            throttle.record(failed=r.get("_status") not in ("ok", "partial"))
+        return r
+
+    for base in range(0, len(items), workers):
+        chunk = items[base:base + workers]
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            results = list(ex.map(_one, chunk))   # 保序
+        for j, (it, r) in enumerate(zip(chunk, results)):
+            yield base + j, it, r
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 三流程接入：create task → run collector → save results
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -559,10 +595,24 @@ def _make_collector():
         return WalmartCollector(), None
 
 
+def _maybe_enrich_backend_gtin(task_id: int, product_ids: list[str],
+                               backend_gtin: bool) -> None:
+    """采集完成后(可选)走卖家后台 isbm 批量补全权威 GTIN。失败不影响主采集。"""
+    if not backend_gtin or not product_ids:
+        return
+    try:
+        from app.service.gtin_enrich import enrich_product_gtins
+        stats = enrich_product_gtins(product_ids)
+        logger.info("task_id=%d 后台GTIN对账: %s", task_id, stats)
+    except Exception as exc:
+        logger.warning("后台GTIN对账异常(不影响采集) task_id=%d: %s", task_id, exc)
+
+
 def run_ids(ids: list[str], with_detail: bool = True,
             collector=None, webhook_url: Optional[str] = None,
             resume_task_id: Optional[int] = None,
-            task_id: Optional[int] = None) -> int:
+            task_id: Optional[int] = None,
+            backend_gtin: bool = False) -> int:
     """流程1：指定 product_id 列表，采详情并落库。
 
     M4 新增：
@@ -615,10 +665,18 @@ def run_ids(ids: list[str], with_detail: bool = True,
     # 避免虚增——与之前行为的唯一差异是续采初始 result_count 从 0 开始而非 len(completed)。
     result_count = 0
     give_up_count = 0  # 本轮 give_up / 非入库 item 数（软封检测用）
+    saved_ids: list[str] = []  # 实际入库的规范 usItemId（供后台 GTIN 对账，区别于输入的次级 id）
+
+    from app.config import DETAIL_WORKERS
+    from app.engine.collector import _AdaptiveThrottle
+    _workers = max(1, DETAIL_WORKERS)
+    _throttle = _AdaptiveThrottle() if _workers > 1 else None
+    _items = [{"product_id": pid, "url": None} for pid in remaining]
 
     try:
-        for i, product_id in enumerate(remaining, 1):
-            r = _collect_with_retry(c, product_id)
+        for idx, it, r in _iter_collected(c, _items, _workers, _throttle):
+            product_id = it["product_id"]
+            i = idx + 1
 
             # 封控：通知 lane，任务标 blocked 后返回
             if r.get("_status") in BLOCKED_STATUSES:
@@ -639,7 +697,9 @@ def run_ids(ids: list[str], with_detail: bool = True,
             saved = save_product(r, task_id, lane=lane)
             if saved:
                 result_count += 1
-                mark_item_done(task_id, product_id)
+                mark_item_done(task_id, product_id)  # 按输入 id 记完成（断点续采用）
+                if r.get("product_id"):
+                    saved_ids.append(str(r["product_id"]))  # 入库用规范 id
             else:
                 give_up_count += 1
 
@@ -682,6 +742,9 @@ def run_ids(ids: list[str], with_detail: bool = True,
                     result_count=result_count)
     logger.info("run_ids done task_id=%d ids=%d saved=%d", task_id, len(ids), result_count)
 
+    # 可选：卖家后台权威 GTIN 对账补全（用实际入库的规范 id，覆盖次级 id 漏采）
+    _maybe_enrich_backend_gtin(task_id, saved_ids, backend_gtin)
+
     # webhook 回调
     _maybe_fire_webhook(task_id, webhook_url)
     return task_id
@@ -709,12 +772,19 @@ def _process_listing(c, lane, task_id: int, listing: list, with_detail: bool,
     update_progress(task_id, progress=0, total=total, result_count=written)
 
     if not with_detail:
-        return ("done", written)
+        return ("done", written, [])
 
     result_count = 0
     give_up = 0
-    for i, it in enumerate(listing, 1):
-        r = _collect_with_retry(c, it["product_id"], it.get("url"))
+    saved_ids: list[str] = []
+
+    from app.config import DETAIL_WORKERS
+    from app.engine.collector import _AdaptiveThrottle
+    _workers = max(1, DETAIL_WORKERS)
+    _throttle = _AdaptiveThrottle() if _workers > 1 else None
+
+    for idx, it, r in _iter_collected(c, listing, _workers, _throttle):
+        i = idx + 1
         if r.get("_status") in BLOCKED_STATUSES:
             if lane is not None:
                 try:
@@ -724,9 +794,11 @@ def _process_listing(c, lane, task_id: int, listing: list, with_detail: bool,
             update_status(task_id, "blocked",
                           error_msg=f"封控 product_id={it['product_id']}")
             _maybe_fire_webhook(task_id, webhook_url)
-            return ("blocked", result_count)
+            return ("blocked", result_count, saved_ids)
         if save_product(r, task_id, lane=lane):
             result_count += 1
+            if r.get("product_id"):
+                saved_ids.append(str(r["product_id"]))
         else:
             give_up += 1
         # 阶段2：每采一个详情，进度 +1（前端数量随之变动）
@@ -740,7 +812,7 @@ def _process_listing(c, lane, task_id: int, listing: list, with_detail: bool,
         update_status(task_id, "blocked",
                       error_msg=f"疑似软封：{give_up} 项详情全部失败，入库 0")
         _maybe_fire_webhook(task_id, webhook_url)
-        return ("blocked", 0)
+        return ("blocked", 0, saved_ids)
 
     # 列表翻页中途被封 → 数据不完整，标 blocked（即使详情都采到了），提示换IP重采
     if listing_truncated:
@@ -752,9 +824,9 @@ def _process_listing(c, lane, task_id: int, listing: list, with_detail: bool,
                       error_msg=f"翻页中途被封，列表不完整（仅 {total} 件，已入库 {result_count}）。"
                                 f"建议换住宅IP后重采。")
         _maybe_fire_webhook(task_id, webhook_url)
-        return ("blocked", result_count)
+        return ("blocked", result_count, saved_ids)
 
-    return ("done", result_count)
+    return ("done", result_count, saved_ids)
 
 
 def run_keyword(keyword: str, max_pages: int = 25,
@@ -763,7 +835,8 @@ def run_keyword(keyword: str, max_pages: int = 25,
                 max_price: Optional[float] = None,
                 collector=None,
                 webhook_url: Optional[str] = None,
-                task_id: Optional[int] = None) -> int:
+                task_id: Optional[int] = None,
+                backend_gtin: bool = False) -> int:
     """流程2：关键词采集，列表落 listings，详情落 products。
 
     Args:
@@ -815,7 +888,7 @@ def run_keyword(keyword: str, max_pages: int = 25,
         listing = result.get("listing") or []
 
         # 阶段2：列表落库 + 逐个采详情（带增量进度）
-        outcome, result_count = _process_listing(
+        outcome, result_count, saved_ids = _process_listing(
             c, lane, task_id, listing, with_detail, webhook_url, f"keyword={keyword!r}",
             listing_truncated=result.get("truncated", False))
         if outcome == "blocked":
@@ -835,6 +908,10 @@ def run_keyword(keyword: str, max_pages: int = 25,
     logger.info("run_keyword done task_id=%d keyword=%r listing=%d saved=%d",
                 task_id, keyword, len(listing), result_count)
 
+    # 可选：卖家后台权威 GTIN 对账补全（用实际入库的规范 id）
+    if with_detail:
+        _maybe_enrich_backend_gtin(task_id, saved_ids, backend_gtin)
+
     # webhook 回调
     _maybe_fire_webhook(task_id, webhook_url)
     return task_id
@@ -844,7 +921,8 @@ def run_seller(seller_id: str, max_pages: int = 30,
                with_detail: bool = True,
                collector=None,
                webhook_url: Optional[str] = None,
-               task_id: Optional[int] = None) -> int:
+               task_id: Optional[int] = None,
+               backend_gtin: bool = False) -> int:
     """流程3：卖家全店采集，列表落 listings，详情落 products。
 
     Args:
@@ -883,7 +961,7 @@ def run_seller(seller_id: str, max_pages: int = 30,
         listing = result.get("listing") or []
 
         # 阶段2：列表落库 + 逐个采详情（带增量进度）
-        outcome, result_count = _process_listing(
+        outcome, result_count, saved_ids = _process_listing(
             c, lane, task_id, listing, with_detail, webhook_url, f"seller={seller_id}",
             listing_truncated=result.get("truncated", False))
         if outcome == "blocked":
@@ -902,6 +980,10 @@ def run_seller(seller_id: str, max_pages: int = 30,
     update_status(task_id, "done")
     logger.info("run_seller done task_id=%d seller_id=%s listing=%d saved=%d",
                 task_id, seller_id, len(listing), result_count)
+
+    # 可选：卖家后台权威 GTIN 对账补全（用实际入库的规范 id）
+    if with_detail:
+        _maybe_enrich_backend_gtin(task_id, saved_ids, backend_gtin)
 
     # webhook 回调
     _maybe_fire_webhook(task_id, webhook_url)

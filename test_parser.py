@@ -168,6 +168,42 @@ def main():
     ok &= check("拦截页 → blocked", p.parse_product("x" * 300 + "px-captcha")["_status"] == "blocked")
     ok &= check("无NEXT_DATA → no_next_data", p.parse_product("<html>" + "y" * 300 + "</html>")["_status"] == "no_next_data")
 
+    print("● 5. 标识符提取（改进1：原生 gtin13 优先 / 缺 upc 不再漏 / 防张冠李戴）")
+    _PAD = "x" * 220  # 填充使 JSON > 200 字符，绕过 parser 的空页守卫
+    # 5a) 头号缺陷修复：有原生 gtin13、无 upc（marketplace 商品常见）
+    r = p.parse_product(_wrap(
+        {"usItemId": "1", "name": _PAD, "gtin13": "0193575030333"}, {}))
+    ok &= check("5a 原生 gtin13 取到", r["gtin13"] == "0193575030333")
+    ok &= check("5a upc 反推(去前导0)", r["upc"] == "193575030333")
+    # 5b) 原生 gtin13 落在 idml
+    r = p.parse_product(_wrap(
+        {"usItemId": "2", "name": _PAD}, {"gtin13": "0840095857772", "specifications": []}))
+    ok &= check("5b idml.gtin13 取到", r["gtin13"] == "0840095857772")
+    # 5c) 原生 gtin13 优先于"由 upc 派生"（二者不同值时不被覆盖）
+    r = p.parse_product(_wrap(
+        {"usItemId": "3", "name": _PAD, "upc": "012345678905",
+         "gtin13": "0840095857772"}, {}))
+    ok &= check("5c gtin13 用原生非派生", r["gtin13"] == "0840095857772")
+    ok &= check("5c upc 保留原值", r["upc"] == "012345678905")
+    # 5d) 仅 upc → gtin13 仍按旧逻辑派生（向后兼容）
+    r = p.parse_product(_wrap({"usItemId": "4", "name": _PAD, "upc": "046013460691"}, {}))
+    ok &= check("5d 仅upc→gtin13派生", r["gtin13"] == "0046013460691")
+    # 5e) 真 EAN-13（非前导0）→ 无对应 UPC-A，upc 应留空
+    r = p.parse_product(_wrap({"usItemId": "5", "name": _PAD, "gtin13": "5012345678900"}, {}))
+    ok &= check("5e EAN gtin13 取到", r["gtin13"] == "5012345678900")
+    ok &= check("5e EAN 不反推 upc", r["upc"] is None)
+    # 5f) 防张冠李戴：主商品无标识符，变体子树里的 upc 不应被抓
+    r = p.parse_product(_wrap(
+        {"usItemId": "6", "name": _PAD,
+         "variantsMap": {"x": {"usItemId": "6-v", "upc": "111111111111"}}}, {}))
+    ok &= check("5f 变体 upc 不抓(防串号)", r["upc"] is None and r["gtin13"] is None)
+    # 5g) gtin13 从 specifications 取（name 含 GTIN）
+    r = p.parse_product(_wrap(
+        {"usItemId": "7", "name": _PAD},
+        {"specifications": [{"name": "Global Trade Item Number (GTIN)",
+                             "value": "00810116120475"}]}))
+    ok &= check("5g specs.GTIN 取到", r["gtin13"] == "00810116120475")
+
     print()
     print("✅ 全部通过" if ok else "❌ 有失败项")
     return 0 if ok else 1

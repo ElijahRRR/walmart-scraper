@@ -4,3 +4,6 @@ curl_cffi>=0.7
 requests>=2.31
 openpyxl>=3.1
 python-multipart>=0.0.9
+# 改进3：卖家后台 GTIN 采集仅用 playwright 作 CDP 客户端连接 BitBrowser 自带 Chrome，
+# 无需 `playwright install`（不下载浏览器内核）
+playwright>=1.40
