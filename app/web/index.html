@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="/static/styles.css" />
+<link rel="stylesheet" href="/static/styles.css?v=20260608" />
 </head>
 <body>
 <div id="root"></div>
@@ -16,13 +16,14 @@
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
 
-<script src="/static/api.js"></script>
-<script type="text/babel" src="/static/components.jsx"></script>
-<script type="text/babel" src="/static/metrics.jsx"></script>
-<script type="text/babel" src="/static/submit.jsx"></script>
-<script type="text/babel" src="/static/tasklist.jsx"></script>
-<script type="text/babel" src="/static/infra.jsx"></script>
-<script type="text/babel" src="/static/results.jsx"></script>
-<script type="text/babel" src="/static/app.jsx"></script>
+<!-- ?v=<date> 一次性破除浏览器旧缓存；后端已对 /static 发 Cache-Control:no-cache，后续部署普通刷新即生效 -->
+<script src="/static/api.js?v=20260608"></script>
+<script type="text/babel" src="/static/components.jsx?v=20260608"></script>
+<script type="text/babel" src="/static/metrics.jsx?v=20260608"></script>
+<script type="text/babel" src="/static/submit.jsx?v=20260608"></script>
+<script type="text/babel" src="/static/tasklist.jsx?v=20260608"></script>
+<script type="text/babel" src="/static/infra.jsx?v=20260608"></script>
+<script type="text/babel" src="/static/results.jsx?v=20260608"></script>
+<script type="text/babel" src="/static/app.jsx?v=20260608"></script>
 </body>
 </html>

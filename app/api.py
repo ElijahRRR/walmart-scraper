@@ -105,6 +105,18 @@ if _WEB_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(_WEB_DIR)), name="static")
 
 
+# 首页 + 静态前端资源禁用强缓存：始终回源校验（ETag/Last-Modified 命中则 304，很轻量）。
+# 否则浏览器对无 Cache-Control 的 /static/*.jsx 走启发式缓存，改了前端后线上仍用旧文件
+# （表现为"部署了却看不到新功能"）。带 no-cache 后，每次部署普通刷新即可拿到最新前端。
+@app.middleware("http")
+async def _revalidate_frontend(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 鉴权依赖
 # ─────────────────────────────────────────────────────────────────────────────
