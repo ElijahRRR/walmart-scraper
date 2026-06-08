@@ -36,6 +36,7 @@ const ICONS = {
   trend: "M3 17l6-6 4 4 7-8",
   layers: "M12 3l9 5-9 5-9-5 9-5zm9 9l-9 5-9-5",
   dollar: "M12 3v18M16 7a4 4 0 00-4-2c-2.2 0-4 1.3-4 3s1.8 3 4 3 4 1.3 4 3-1.8 3-4 3a4 4 0 01-4-2",
+  external: "M14 4h6v6M20 4l-9 9M19 13v6a1 1 0 01-1 1H6a1 1 0 01-1-1V6a1 1 0 011-1h6",
 };
 
 function Icon({ name, size = 16, sw = 2, fill = false, style, className }) {

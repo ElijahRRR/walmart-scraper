@@ -181,6 +181,18 @@ function Cell({ c, r, i }) {
     return <td className="num"><span className={ok ? "gtin-ok" : ""} title={ok ? "目录权威码" : "公开页值"}>{v}</span></td>;
   }
   if (c.price) return <td><span className="cell-price">{v}</span></td>;
+  if (c.k === "title") {
+    const href = r.url || (r.product_id ? "https://www.walmart.com/ip/" + r.product_id : null);
+    if (!v) return <td>—</td>;
+    if (!href) return <td title={v}>{v}</td>;
+    return (
+      <td title={"在沃尔玛打开：" + v}>
+        <a className="cell-link" href={href} target="_blank" rel="noopener noreferrer">
+          {v}<Icon name="external" size={11} style={{ marginLeft: 4, opacity: .55, flex: "none" }} />
+        </a>
+      </td>
+    );
+  }
   const cls = c.mono ? "num" : "";
   const title = typeof v === "string" ? v : "";
   return <td className={cls} title={title}>{v}</td>;

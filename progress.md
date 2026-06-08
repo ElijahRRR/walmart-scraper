@@ -144,3 +144,13 @@
 - **任务批量删除**：`tasks.delete_tasks(task_ids, vacuum=False)` 级联删 products/product_changes/listings（外键 SET NULL 不自动删故显式删）；`POST /tasks/delete`；前端任务列表复选框 + 全选 + 「删除选中(N)」按钮 + 确认弹窗 + 自动刷新保留勾选。解决任务列表 + DB 膨胀。
 - **公开仓库安全加固**：BitBrowser Local API Token 从 isbm_client/seller_gtin/upload_session/test 的硬编码挪到 `BIT_API_KEY` 环境变量（默认空），真值入本机 .env（gitignore）；.env.example 补 DETAIL_WORKERS/SELLER_SESSION_FILE/BIT_API_KEY/PORT=3000。提交前全量 secret 扫描通过。
 - 测试：全套 261 通过（新增 isbm/gtin_enrich/seller_session/pagination_yahoo/task_delete）。已部署 DMIT 验证。
+
+### Session 8 — 结果标题可跳转沃尔玛详情页（2026-06-08）
+- **需求**：在结果抽屉里点击商品标题，新标签页打开该商品的沃尔玛详情页。
+- **实现**（纯前端，`app/web/`）：
+  - `results.jsx` `Cell` 组件给 `title` 列加链接分支：`href = r.url || (r.product_id ? "https://www.walmart.com/ip/" + r.product_id : null)`——优先用采集到的官方 canonical `url`，缺失时回退 `/ip/{product_id}`；`target=_blank` + `rel="noopener noreferrer"`，悬停提示「在沃尔玛打开：<标题>」。products / listings 两个标签的标题列复用同一逻辑（列 key 均为 `title`）。
+  - `components.jsx` 新增 `external`（外链）图标；标题链接尾部带该小图标。
+  - `styles.css` 接上此前预留但未使用的 `.cell-link`（品牌蓝 `var(--wm)` + hover 下划线 + inline-flex 对齐图标）。
+- **验证**：全套 261 测试无回归；启动服务用浏览器打开任务 #3 结果抽屉，两条商品标题均渲染为链接，href 指向真实沃尔玛 canonical URL（如 `.../ip/Replacement-Lid-Owala-.../19117658601`），`target=_blank`、带外链图标，控制台零报错（截图存档）。
+- **部署**：DMIT `/opt/walmart-scraper` 为文件部署（非 git checkout），静态文件 StaticFiles 直读磁盘，无需构建/重启——拷贝 3 个前端文件 + 2 个文档到位即生效。
+- Issues：无。README〔功能面板·结果查看〕〔Web UI 用法·查看结果〕两处补充该能力。

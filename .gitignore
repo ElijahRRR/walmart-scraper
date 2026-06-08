@@ -13,5 +13,8 @@ data/seller_session.json.tmp
 # mac 垃圾文件
 .DS_Store
 
+# 本地编辑器/预览配置(preview 启动等, 仅本机用)
+.claude/
+
 # 不相关的本地工具箱目录(误放在仓库内, 切勿提交到公开仓库)
 沃尔玛/

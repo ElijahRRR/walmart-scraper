@@ -300,7 +300,8 @@ table.dt tbody tr:hover { background: var(--wm-50); }
 table.dt td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .cell-img { width: 34px; height: 34px; border-radius: 6px; flex: none; }
 .cell-price { font-weight: 700; color: var(--ink); font-family: var(--mono); }
-.cell-link { color: var(--wm); text-decoration: none; }
+.cell-link { color: var(--wm); text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; }
+.cell-link:hover { text-decoration: underline; }
 .gtin-ok { color: var(--ok); font-weight: 600; }
 
 /* ---- Empty ---- */
